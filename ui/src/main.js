@@ -1,5 +1,5 @@
 import { Boot } from './scenes/Boot';
-import { ClickerGame } from './scenes/ClickerGame';
+import { Simulation } from './scenes/Simulation';
 import { Game } from 'phaser';
 import { GameOver } from './scenes/GameOver';
 import { MainMenu } from './scenes/MainMenu';
@@ -20,14 +20,14 @@ const config = {
     physics: {
         default: 'arcade',
         arcade: {
-            gravity: { y: 400 }
+            gravity: {}
         }
     },
     scene: [
         Boot,
         Preloader,
         MainMenu,
-        ClickerGame,
+        Simulation,
         GameOver,
         ConnectionStatusOverlay
     ]

@@ -1,14 +1,11 @@
 import { Scene } from 'phaser';
 
-export class MainMenu extends Scene
-{
-    constructor ()
-    {
+export class MainMenu extends Scene {
+    constructor() {
         super('MainMenu');
     }
 
-    create ()
-    {
+    create() {
         //  Get the current highscore from the registry
         const score = this.registry.get('highscore');
 
@@ -38,7 +35,7 @@ export class MainMenu extends Scene
 
         this.input.once('pointerdown', () => {
 
-            this.scene.start('ClickerGame');
+            this.scene.start('Simulation');
 
         });
     }
