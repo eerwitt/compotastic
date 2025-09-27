@@ -1,14 +1,28 @@
 import Phaser, { Scene } from 'phaser';
 
 const DEFAULT_CAT_COUNT = 10;
-const CAT_ASCII = '^.^';
+const CAT_FACE = '^.^';
 const CAT_FONT_STYLE = { fontFamily: 'Courier', fontSize: 32, color: '#e27272ff' };
+const CAT_MODAL_FONT_STYLE = { fontFamily: 'Courier', fontSize: 20, color: '#f4e1c1ff', align: 'left' };
 const CAT_TILE_PADDING_RATIO = 0.2;
 const CAT_SPEED_RANGE = { min: 40, max: 140 };
 const LOOK_INTERVAL_RANGE = { min: 800, max: 2200 };
 const GRID_TILE_COUNT = { width: 250, height: 250 };
 const GRID_LINE_COLOR = 0x615a3b;
 const GRID_LINE_ALPHA = 0.2;
+
+const CAT_ATTRIBUTE_PRESETS = [
+    { cpu: '68000 8MHz', ram: '512KB' },
+    { cpu: 'Z80 4MHz', ram: '128KB' },
+    { cpu: 'Pentium 100MHz', ram: '16MB' },
+    { cpu: 'PowerPC 233MHz', ram: '64MB' },
+    { cpu: 'Athlon XP 1.5GHz', ram: '256MB' },
+    { cpu: 'Core 2 Duo 2.0GHz', ram: '2GB' },
+    { cpu: 'Xeon 2.4GHz', ram: '8GB' },
+    { cpu: 'ARM Cortex-A9 1GHz', ram: '1GB' },
+    { cpu: 'MIPS R4000 100MHz', ram: '32MB' },
+    { cpu: 'SPARCstation 40MHz', ram: '64MB' }
+];
 
 const DIRECTIONS = [
     { x: 0, y: -1 },
@@ -108,13 +122,34 @@ class Grid {
     }
 }
 
+function createAsciiBox(lines) {
+    if (!lines || lines.length === 0) {
+        return '';
+    }
+
+    const innerWidth = lines.reduce((max, line) => Math.max(max, line.length), 0);
+    const horizontalBorder = `+${'-'.repeat(innerWidth + 2)}+`;
+    const paddedLines = lines.map((line) => `| ${line.padEnd(innerWidth)} |`);
+
+    return [horizontalBorder, ...paddedLines, horizontalBorder].join('\n');
+}
+
 class Cat {
-    constructor(scene, grid, tileX, tileY) {
+    constructor(scene, grid, tileX, tileY, attributes) {
         this.scene = scene;
         this.grid = grid;
         this.speed = Phaser.Math.Between(CAT_SPEED_RANGE.min, CAT_SPEED_RANGE.max);
-        this.text = scene.add.text(0, 0, CAT_ASCII, CAT_FONT_STYLE);
+        this.face = CAT_FACE;
+        this.text = scene.add.text(0, 0, createAsciiBox([this.face]), CAT_FONT_STYLE);
         this.text.setOrigin(0.5, 0.5);
+        this.text.setDepth(5);
+        this.text.setInteractive({ useHandCursor: true });
+
+        this.attributes = { ...attributes };
+        this.modal = scene.add.text(0, 0, '', CAT_MODAL_FONT_STYLE);
+        this.modal.setOrigin(0.5, 1);
+        this.modal.setDepth(20);
+        this.modal.setVisible(false);
 
         this.tileX = tileX;
         this.tileY = tileY;
@@ -129,6 +164,9 @@ class Cat {
         this.targetTileY = tileY;
         this.targetPixelX = 0;
         this.targetPixelY = 0;
+
+        this.text.on('pointerover', this.showAttributesModal, this);
+        this.text.on('pointerout', this.hideAttributesModal, this);
 
         this.onGridLayoutChanged();
     }
@@ -161,6 +199,31 @@ class Cat {
         const scale = Math.min(maxWidth / textWidth, maxHeight / textHeight);
 
         this.text.setScale(scale);
+    }
+
+    buildModalContent() {
+        const lines = [
+            `CPU: ${this.attributes.cpu}`,
+            `RAM: ${this.attributes.ram}`,
+            `LOC: (${this.tileX}, ${this.tileY})`
+        ];
+
+        return createAsciiBox(lines);
+    }
+
+    updateModalPosition() {
+        const offset = (this.text.displayHeight / 2) + (this.grid.tileSize * 0.4);
+        this.modal.setPosition(this.text.x, this.text.y - offset);
+    }
+
+    showAttributesModal() {
+        this.modal.setText(this.buildModalContent());
+        this.updateModalPosition();
+        this.modal.setVisible(true);
+    }
+
+    hideAttributesModal() {
+        this.modal.setVisible(false);
     }
 
     lookAround(time) {
@@ -218,11 +281,21 @@ class Cat {
                 this.scheduleNextLook(time);
             }
 
+            if (this.modal.visible) {
+                this.modal.setText(this.buildModalContent());
+                this.updateModalPosition();
+            }
+
             return;
         }
 
         if (time >= this.nextLookTime) {
             this.lookAround(time);
+        }
+
+        if (this.modal.visible) {
+            this.modal.setText(this.buildModalContent());
+            this.updateModalPosition();
         }
     }
 
@@ -235,6 +308,10 @@ class Cat {
         this.setPosition(this.tileX, this.tileY);
         this.isMoving = false;
         this.scheduleNextLook(this.scene.time.now || 0);
+        if (this.modal.visible) {
+            this.modal.setText(this.buildModalContent());
+            this.updateModalPosition();
+        }
     }
 }
 
@@ -268,11 +345,16 @@ export class Simulation extends Scene {
             }
         });
 
+        const attributePool = Phaser.Utils.Array.Shuffle([...CAT_ATTRIBUTE_PRESETS]);
+
         for (let i = 0; i < DEFAULT_CAT_COUNT; i++) {
             const tileX = Phaser.Math.Between(0, GRID_TILE_COUNT.width - 1);
             const tileY = Phaser.Math.Between(0, GRID_TILE_COUNT.height - 1);
 
-            const cat = new Cat(this, this.grid, tileX, tileY);
+            const attributeIndex = i % attributePool.length;
+            const catAttributes = { ...attributePool[attributeIndex] };
+
+            const cat = new Cat(this, this.grid, tileX, tileY, catAttributes);
 
             cat.lookAround(this.time.now || 0);
             this.cats.push(cat);
