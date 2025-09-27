@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .router import router
 
@@ -17,6 +18,23 @@ def create_app() -> FastAPI:
     logger.debug("Creating FastAPI application")
     app = FastAPI(title="Compotastic Backend API")
     app.include_router(router)
+
+    origins = [
+        "http://localhost.tiangolo.com",
+        "https://localhost.tiangolo.com",
+        "http://localhost",
+        "http://localhost:8080",
+        "http://localhost:5173",
+    ]
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     logger.debug("FastAPI application configured with router")
     return app
 
