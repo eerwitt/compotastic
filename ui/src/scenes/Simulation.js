@@ -1539,6 +1539,20 @@ export class Simulation extends Scene {
             return;
         }
 
+        const shouldSuspendPanel = (
+            this.shouldReceiveRemoteUpdates &&
+            this.isWaitingForData &&
+            !this.isDemoSimulation
+        );
+
+        if (typeof this.statusPanel.setSuspended === 'function') {
+            this.statusPanel.setSuspended(shouldSuspendPanel);
+        }
+
+        if (shouldSuspendPanel) {
+            return;
+        }
+
         const panelData = this.buildStatusPanelData();
 
         if (panelData) {
