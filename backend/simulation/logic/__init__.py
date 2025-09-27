@@ -367,7 +367,7 @@ class GridWorldEnvironment:
 
         if resolved_action is Action.STOP:
             self._node_states[node.identifier] = active_node
-            return self.encode_state(active_node.location), active_node, 0, True
+            return self.encode_state(active_node.location), active_node, 0, False
 
         if resolved_action is Action.CALL_FOR_HELP:
             self._log(

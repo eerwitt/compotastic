@@ -106,7 +106,6 @@ class MeshSimulation:
         self._cat_idle_chance = 0.25
         self._dog_idle_chance = 0.45
         self._dog_move_interval = 3
-        self._completed_nodes: Set[str] = set()
 
         occupied: CoordinateSet = set()
         self._cats = self._spawn_agents(
@@ -256,23 +255,12 @@ class MeshSimulation:
     ) -> List[MeshtasticNode]:
         updated: List[MeshtasticNode] = []
         for node in nodes:
-            if node.identifier in self._completed_nodes:
-                stationary_node = self._drain_battery(node)
-                occupied.add((stationary_node.location.x, stationary_node.location.y))
-                self._environment._node_states[node.identifier] = stationary_node
-                updated.append(stationary_node)
-                continue
-
             occupied.discard((node.location.x, node.location.y))
-            next_node, completed = self._move_node(
+            next_node = self._move_node(
                 node,
                 occupied,
                 idle_probability=idle_probability,
             )
-            if completed:
-                self._completed_nodes.add(node.identifier)
-            else:
-                self._completed_nodes.discard(node.identifier)
             occupied.add((next_node.location.x, next_node.location.y))
             updated.append(next_node)
         return updated
@@ -283,18 +271,22 @@ class MeshSimulation:
         occupied: CoordinateSet,
         *,
         idle_probability: float,
-    ) -> Tuple[MeshtasticNode, bool]:
+    ) -> MeshtasticNode:
         idle_probability = float(idle_probability)
         idle_probability = min(max(idle_probability, 0.0), 1.0)
 
         if self._rng.random() < idle_probability:
-            return self._drain_battery(node), False
+            stationary_node = self._drain_battery(node)
+            self._sync_environment_state(stationary_node)
+            return stationary_node
 
         surroundings = self._environment.surroundings_for(node.location)
         actions = list(surroundings.available_actions())
 
         if not actions:
-            return self._drain_battery(node), False
+            stationary_node = self._drain_battery(node)
+            self._sync_environment_state(stationary_node)
+            return stationary_node
 
         self._rng.shuffle(actions)
 
@@ -313,10 +305,39 @@ class MeshSimulation:
                 if candidate_position in occupied:
                     continue
 
-            _, candidate, _, done = self._environment.step(node, int(action))
-            return self._drain_battery(candidate), done
+            _, candidate, reward, _ = self._environment.step(node, int(action))
+            drained_candidate = self._drain_battery(candidate)
+            self._sync_environment_state(drained_candidate)
+            if resolved_action is Action.DO_WORK and reward != 0:
+                self._consume_reward(candidate.location, reward, node.identifier)
+            return drained_candidate
 
-        return self._drain_battery(node), False
+        stationary_node = self._drain_battery(node)
+        self._sync_environment_state(stationary_node)
+        return stationary_node
+
+    def _sync_environment_state(self, node: MeshtasticNode) -> None:
+        self._environment._node_states[node.identifier] = node
+
+    def _consume_reward(
+        self,
+        location: GridLocation,
+        reward_value: int,
+        node_identifier: str,
+    ) -> None:
+        self._environment.set_reward(location, 0)
+        remaining: List[RewardTile] = []
+        removed = False
+        for tile in self._reward_tiles:
+            if tile.location == location and not removed:
+                removed = True
+                continue
+            remaining.append(tile)
+        if removed:
+            self._log(
+                f"Node {node_identifier} completed job at {location} and collected reward {reward_value}"
+            )
+        self._reward_tiles = remaining
 
     def _drain_battery(self, node: MeshtasticNode) -> MeshtasticNode:
         drain_amount = self._rng.uniform(0.05, 0.35)

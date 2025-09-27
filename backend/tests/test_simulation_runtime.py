@@ -97,22 +97,28 @@ def test_move_node_skips_occupied_tiles_without_side_effects() -> None:
     assert env_state.location == updated.location
 
 
-def test_nodes_that_stop_remain_stationary() -> None:
+def test_nodes_resume_exploration_after_stop() -> None:
     simulation = MeshSimulation(width=5, height=5, cat_count=1, dog_count=0, random_seed=7)
 
     cat = simulation.snapshot().cats[0].with_location(GridLocation(2, 2))
     simulation._cats = [cat]
     simulation.environment._node_states[cat.identifier] = cat
 
-    class StopFirstRandom:
+    class StopThenMoveRandom:
+        def __init__(self) -> None:
+            self._shuffle_calls = 0
+
         def random(self) -> float:
             return 0.9
 
         def shuffle(self, sequence) -> None:
+            self._shuffle_calls += 1
             stop_value = Action.STOP.value
-            if stop_value in sequence:
-                sequence.remove(stop_value)
-                sequence.insert(0, stop_value)
+            move_right_value = Action.MOVE_RIGHT.value
+            if self._shuffle_calls == 1 and stop_value in sequence:
+                sequence.sort(key=lambda value: 0 if value == stop_value else 1)
+            elif move_right_value in sequence:
+                sequence.sort(key=lambda value: 0 if value == move_right_value else 1)
 
         def uniform(self, start: float, end: float) -> float:
             return start
@@ -120,7 +126,7 @@ def test_nodes_that_stop_remain_stationary() -> None:
         def randrange(self, upper: int) -> int:
             return 0
 
-    simulation._rng = StopFirstRandom()
+    simulation._rng = StopThenMoveRandom()
 
     initial_location = simulation.snapshot().cats[0].location
 
@@ -132,4 +138,45 @@ def test_nodes_that_stop_remain_stationary() -> None:
     simulation.step()
     later_snapshot = simulation.snapshot().cats[0]
 
-    assert later_snapshot.location == initial_location
+    assert later_snapshot.location != initial_location
+
+
+def test_do_work_consumes_reward_and_updates_state() -> None:
+    simulation = MeshSimulation(
+        width=5,
+        height=5,
+        cat_count=1,
+        dog_count=0,
+        random_seed=9,
+        reward_tiles=[(2, 2, 4)],
+    )
+
+    cat = simulation.snapshot().cats[0].with_location(GridLocation(2, 2))
+    simulation._cats = [cat]
+    simulation.environment._node_states[cat.identifier] = cat
+
+    class DoWorkFirstRandom:
+        def random(self) -> float:
+            return 0.9
+
+        def shuffle(self, sequence) -> None:
+            do_work_value = Action.DO_WORK.value
+            if do_work_value in sequence:
+                sequence.sort(key=lambda value: 0 if value == do_work_value else 1)
+
+        def uniform(self, start: float, end: float) -> float:
+            return start
+
+        def randrange(self, upper: int) -> int:
+            return 0
+
+    simulation._rng = DoWorkFirstRandom()
+
+    location = GridLocation(2, 2)
+
+    with patch.object(simulation, "_log") as log_spy:
+        simulation.step()
+
+    assert simulation.environment.reward_at(location) == 0
+    assert not any(tile.location == location for tile in simulation.snapshot().rewards)
+    assert any("completed job" in str(call.args[0]) for call in log_spy.call_args_list)
