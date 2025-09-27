@@ -26,6 +26,19 @@ const DOG_MOVE_INTERVAL_RANGE = { min: 2500, max: 6000 };
 const DOG_MOVE_PROBABILITY = 0.35;
 const MAX_RANDOM_PLACEMENT_ATTEMPTS = 40;
 
+const REWARD_FONT_STYLE = {
+    fontFamily: 'Courier',
+    fontSize: 24,
+    color: '#dcd4a0ff',
+    fontStyle: 'bold',
+    align: 'center'
+};
+const REWARD_TILE_PADDING_RATIO = 0.45;
+const DEMO_POSITIVE_REWARD_COUNT = 4;
+const DEMO_NEGATIVE_REWARD_COUNT = 3;
+const DEMO_POSITIVE_REWARD_VALUE = 5;
+const DEMO_NEGATIVE_REWARD_VALUE = -5;
+
 const CAT_BLINK_INTERVAL_RANGE = { min: 2800, max: 5200 };
 const CAT_BLINK_DURATION = 250;
 const CAT_MOUTH_INTERVAL_RANGE = { min: 3400, max: 6800 };
@@ -955,6 +968,85 @@ class Dog {
     }
 }
 
+class RewardMarker {
+    constructor(scene, grid, tileX, tileY, value) {
+        this.scene = scene;
+        this.grid = grid;
+        this.tileX = tileX;
+        this.tileY = tileY;
+        this.value = Number.isFinite(value) ? Math.trunc(value) : 0;
+
+        this.text = scene.add.text(0, 0, '', REWARD_FONT_STYLE);
+        this.text.setOrigin(0.5, 0.5);
+        this.text.setDepth(3);
+
+        this.updateAppearance();
+        this.onGridLayoutChanged();
+    }
+
+    updateAppearance() {
+        const ascii = this.buildAscii();
+        const color = this.resolveColor();
+
+        this.text.setText(ascii);
+        this.text.setColor(color);
+        this.scaleToTile();
+    }
+
+    buildAscii() {
+        if (this.value > 0) {
+            return `+${this.value}`;
+        }
+
+        if (this.value < 0) {
+            return `${this.value}`;
+        }
+
+        return '0';
+    }
+
+    resolveColor() {
+        if (this.value > 0) {
+            return '#7cfc00';
+        }
+
+        if (this.value < 0) {
+            return '#ff6b6b';
+        }
+
+        return REWARD_FONT_STYLE.color;
+    }
+
+    setPosition(tileX, tileY) {
+        const position = this.grid.tileToWorld(tileX, tileY);
+
+        this.tileX = tileX;
+        this.tileY = tileY;
+        this.text.setPosition(position.x, position.y);
+    }
+
+    scaleToTile() {
+        const tileSize = this.grid.tileSize;
+        const padding = tileSize * REWARD_TILE_PADDING_RATIO;
+        const maxWidth = Math.max(1, tileSize - padding);
+        const maxHeight = Math.max(1, tileSize - padding);
+        const textWidth = this.text.width || 1;
+        const textHeight = this.text.height || 1;
+        const scale = Math.min(maxWidth / textWidth, maxHeight / textHeight);
+
+        this.text.setScale(scale);
+    }
+
+    onGridLayoutChanged() {
+        this.scaleToTile();
+        this.setPosition(this.tileX, this.tileY);
+    }
+
+    destroy() {
+        this.text.destroy();
+    }
+}
+
 export class Simulation extends Scene {
     constructor(sceneKey = 'Simulation') {
         super(sceneKey);
@@ -971,6 +1063,7 @@ export class Simulation extends Scene {
         this.nextStatusPanelUpdateTime = 0;
         this.lastSimulationUpdate = null;
         this.isDemoSimulation = false;
+        this.rewardMarkers = [];
 
         this.handleResize = this.handleResize.bind(this);
         this.handleSimulationData = this.handleSimulationData.bind(this);
@@ -1072,11 +1165,17 @@ export class Simulation extends Scene {
         const dogs = Array.isArray(rawConfig.dogs)
             ? rawConfig.dogs.map((entry) => this.normalizeDogEntry(entry))
             : [];
+        const rewards = Array.isArray(rawConfig.rewards)
+            ? rawConfig.rewards
+                .map((entry) => this.normalizeRewardEntry(entry))
+                .filter((entry) => Number.isInteger(entry.tileX) && Number.isInteger(entry.tileY))
+            : [];
 
         return {
             grid: { width, height },
             cats,
-            dogs
+            dogs,
+            rewards
         };
     }
 
@@ -1164,6 +1263,22 @@ export class Simulation extends Scene {
         const identifier = this.extractIdentifier(entry);
 
         return { tileX, tileY, identifier };
+    }
+
+    normalizeRewardEntry(entry) {
+        if (!entry || typeof entry !== 'object') {
+            return { tileX: null, tileY: null, value: 0 };
+        }
+
+        const tileX = this.extractTileCoordinate(entry, 'x');
+        const tileY = this.extractTileCoordinate(entry, 'y');
+        const valueCandidate = [entry.value, entry.reward, entry.amount]
+            .find((candidate) => typeof candidate === 'number' && Number.isFinite(candidate));
+        const value = Number.isFinite(valueCandidate)
+            ? Math.trunc(valueCandidate)
+            : 0;
+
+        return { tileX, tileY, value };
     }
 
     extractTileCoordinate(entry, axis) {
@@ -1319,14 +1434,22 @@ export class Simulation extends Scene {
             this.dogs.push(dog);
             dogIndex += 1;
         });
+
+        if (Array.isArray(config.rewards) && config.rewards.length > 0) {
+            this.buildRewardMarkers(config.rewards);
+        } else if (this.isDemoSimulation) {
+            this.generateDemoRewards();
+        }
     }
 
     clearAnimals() {
         this.cats.forEach((cat) => cat.destroy());
         this.dogs.forEach((dog) => dog.destroy());
+        this.rewardMarkers.forEach((reward) => reward.destroy());
 
         this.cats = [];
         this.dogs = [];
+        this.rewardMarkers = [];
         this.activeHighlight = null;
         this.clearNodeHighlight();
     }
@@ -1411,8 +1534,76 @@ export class Simulation extends Scene {
             }
         }
 
+        if (!this.shouldReceiveRemoteUpdates) {
+            this.generateDemoRewards();
+        }
+
         this.lastSimulationUpdate = Date.now();
         this.refreshStatusPanel();
+    }
+
+    buildRewardMarkers(entries) {
+        entries.forEach((rewardEntry) => {
+            const tileX = Number.isInteger(rewardEntry.tileX) ? rewardEntry.tileX : null;
+            const tileY = Number.isInteger(rewardEntry.tileY) ? rewardEntry.tileY : null;
+
+            if (tileX === null || tileY === null) {
+                return;
+            }
+
+            if (!this.grid.containsTile(tileX, tileY)) {
+                return;
+            }
+
+            const value = Number.isFinite(rewardEntry.value)
+                ? Math.trunc(rewardEntry.value)
+                : 0;
+
+            const marker = new RewardMarker(this, this.grid, tileX, tileY, value);
+            this.rewardMarkers.push(marker);
+        });
+    }
+
+    generateDemoRewards() {
+        if (!this.grid) {
+            return;
+        }
+
+        const totalTiles = this.grid.tileCountWidth * this.grid.tileCountHeight;
+
+        if (totalTiles <= 0) {
+            return;
+        }
+
+        const placed = new Set();
+        const attemptsPerReward = Math.max(1, Math.floor(MAX_RANDOM_PLACEMENT_ATTEMPTS / 2));
+
+        const placeReward = (value) => {
+            for (let attempt = 0; attempt < attemptsPerReward; attempt++) {
+                const candidateX = Phaser.Math.Between(0, this.grid.tileCountWidth - 1);
+                const candidateY = Phaser.Math.Between(0, this.grid.tileCountHeight - 1);
+                const key = `${candidateX},${candidateY}`;
+
+                if (placed.has(key) || this.isTileBlockedForCat(candidateX, candidateY)) {
+                    continue;
+                }
+
+                placed.add(key);
+                const marker = new RewardMarker(this, this.grid, candidateX, candidateY, value);
+                this.rewardMarkers.push(marker);
+                return true;
+            }
+
+            return false;
+        };
+
+        for (let i = 0; i < DEMO_POSITIVE_REWARD_COUNT; i++) {
+            placeReward(DEMO_POSITIVE_REWARD_VALUE);
+        }
+
+        for (let i = 0; i < DEMO_NEGATIVE_REWARD_COUNT; i++) {
+            placeReward(DEMO_NEGATIVE_REWARD_VALUE);
+        }
     }
 
     isTileOccupiedByCat(tileX, tileY, ignoreCat = null) {
@@ -1885,6 +2076,7 @@ export class Simulation extends Scene {
 
         this.cats.forEach((cat) => cat.onGridLayoutChanged());
         this.dogs.forEach((dog) => dog.onGridLayoutChanged());
+        this.rewardMarkers.forEach((reward) => reward.onGridLayoutChanged());
 
         this.positionWaitingText();
         if (this.statusPanel) {
