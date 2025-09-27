@@ -19,7 +19,6 @@ const DEFAULT_DEMO_STATE = Object.freeze({
 const GO_LIVE_ASCII = [
     '┌────────────────────┐',
     '│  CONNECT TO LIVE!  │',
-    '│      ▶▶▶▶▶▶       │',
     '└────────────────────┘'
 ].join('\n');
 
