@@ -1,6 +1,42 @@
 import { submitImageClassificationRequest } from '../api/imageTasks';
 export const DEFAULT_IMAGE_PROMPT = 'This is an image taken from a robots front facing camera, what is the object found in the foreground and classify if this image is dangerous or capable of being moved by a light weight robot. Respond with one of these words only DANGEROUS, MOVABLE, IMMOVABLE, UNKNOWN';
 
+const JPEG_MIME_TYPES = ['image/jpeg', 'image/jpg'];
+
+function isJpegMimeType(value) {
+    if (typeof value !== 'string') {
+        return false;
+    }
+
+    const lower = value.toLowerCase();
+    return JPEG_MIME_TYPES.includes(lower);
+}
+
+function hasJpegExtension(name) {
+    if (typeof name !== 'string') {
+        return false;
+    }
+
+    const lower = name.toLowerCase();
+    return lower.endsWith('.jpg') || lower.endsWith('.jpeg');
+}
+
+function isValidJpegFile(file) {
+    if (!file) {
+        return false;
+    }
+
+    if (file.type && !isJpegMimeType(file.type)) {
+        return false;
+    }
+
+    if (typeof file.name === 'string' && file.name.trim().length > 0) {
+        return hasJpegExtension(file.name.trim());
+    }
+
+    return true;
+}
+
 function createElement(tag, className, attributes = {}) {
     const element = document.createElement(tag);
 
@@ -95,7 +131,7 @@ export class ImageClassificationModal {
         imageLabel.textContent = 'Upload an image to classify';
         this.fileInput = createElement('input', 'image-modal__file-input', {
             type: 'file',
-            accept: 'image/*'
+            accept: JPEG_MIME_TYPES.join(',')
         });
         imageLabel.appendChild(this.fileInput);
 
@@ -245,8 +281,8 @@ export class ImageClassificationModal {
             return;
         }
 
-        if (file.type && !file.type.startsWith('image/')) {
-            this.setStatus('Please choose an image file (png, jpg, gif, webp, or avif).', 'error');
+        if (!isValidJpegFile(file)) {
+            this.setStatus('Only JPEG (.jpg) images are supported.', 'error');
             if (this.fileInput) {
                 this.fileInput.value = '';
             }
@@ -312,6 +348,11 @@ export class ImageClassificationModal {
 
         if (!this.selectedFile) {
             this.setStatus('Upload an image to continue.', 'error');
+            return;
+        }
+
+        if (!isValidJpegFile(this.selectedFile)) {
+            this.setStatus('Only JPEG (.jpg) images are supported.', 'error');
             return;
         }
 

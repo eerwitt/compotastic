@@ -90,6 +90,12 @@ async def create_background_task(
 
     payload = ImagePayload(data=image_bytes, filename=file.filename or "upload.bin", content_type=file.content_type)
 
+    try:
+        payload.normalised_content_type()
+    except ValueError as exc:
+        logger.debug("Rejected non-JPEG upload %s: %s", file.filename, exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     task_id = await manager.create_task(metadata_payload, payload)
     return {"task_id": task_id}
 
