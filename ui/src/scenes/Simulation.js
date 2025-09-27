@@ -33,6 +33,12 @@ const REWARD_FONT_STYLE = {
     fontStyle: 'bold',
     align: 'center'
 };
+const REWARD_MODAL_FONT_STYLE = {
+    fontFamily: 'Courier',
+    fontSize: 20,
+    color: '#f8f1b4ff',
+    align: 'left'
+};
 const REWARD_TILE_PADDING_RATIO = 0.45;
 const DEMO_POSITIVE_REWARD_COUNT = 4;
 const DEMO_NEGATIVE_REWARD_COUNT = 3;
@@ -969,19 +975,64 @@ class Dog {
 }
 
 class RewardMarker {
-    constructor(scene, grid, tileX, tileY, value) {
+    constructor(scene, grid, tileX, tileY, value, attributes = null) {
         this.scene = scene;
         this.grid = grid;
         this.tileX = tileX;
         this.tileY = tileY;
         this.value = Number.isFinite(value) ? Math.trunc(value) : 0;
+        this.attributes = this.sanitizeAttributes(attributes);
 
         this.text = scene.add.text(0, 0, '', REWARD_FONT_STYLE);
         this.text.setOrigin(0.5, 0.5);
         this.text.setDepth(3);
+        this.text.setInteractive({ useHandCursor: true });
+
+        this.modal = scene.add.text(0, 0, '', REWARD_MODAL_FONT_STYLE);
+        this.modal.setOrigin(0.5, 1);
+        this.modal.setDepth(18);
+        this.modal.setVisible(false);
+
+        this.text.on('pointerover', this.showModal, this);
+        this.text.on('pointerout', this.hideModal, this);
 
         this.updateAppearance();
         this.onGridLayoutChanged();
+    }
+
+    sanitizeAttributes(attributes) {
+        const sanitized = {};
+
+        if (attributes && typeof attributes === 'object') {
+            Object.entries(attributes).forEach(([key, value]) => {
+                if (typeof key !== 'string' || key.trim().length === 0) {
+                    return;
+                }
+
+                const label = key.trim();
+                let resolvedValue;
+
+                if (Array.isArray(value)) {
+                    resolvedValue = value.map((item) => String(item)).join(', ');
+                } else if (typeof value === 'boolean') {
+                    resolvedValue = value ? 'Yes' : 'No';
+                } else if (value === null || value === undefined) {
+                    resolvedValue = 'Unknown';
+                } else {
+                    resolvedValue = String(value);
+                }
+
+                sanitized[label] = resolvedValue;
+            });
+        }
+
+        const hasTypeAttribute = Object.keys(sanitized).some((key) => key.toLowerCase() === 'type');
+
+        if (!hasTypeAttribute) {
+            sanitized.Type = this.value >= 0 ? 'Reward' : 'Punishment';
+        }
+
+        return sanitized;
     }
 
     updateAppearance() {
@@ -1023,6 +1074,10 @@ class RewardMarker {
         this.tileX = tileX;
         this.tileY = tileY;
         this.text.setPosition(position.x, position.y);
+
+        if (this.modal.visible) {
+            this.updateModalPosition();
+        }
     }
 
     scaleToTile() {
@@ -1042,8 +1097,39 @@ class RewardMarker {
         this.setPosition(this.tileX, this.tileY);
     }
 
+    updateModalPosition() {
+        const offset = (this.text.displayHeight / 2) + (this.grid.tileSize * 0.35);
+        this.modal.setPosition(this.text.x, this.text.y - offset);
+    }
+
+    buildModalContent() {
+        const lines = [];
+        const valueLabel = this.value > 0 ? `+${this.value}` : `${this.value}`;
+
+        lines.push(`VALUE: ${valueLabel}`);
+
+        Object.entries(this.attributes).forEach(([key, value]) => {
+            lines.push(`${key.toUpperCase()}: ${value}`);
+        });
+
+        lines.push(`LOC: (${this.tileX}, ${this.tileY})`);
+
+        return createAsciiBox(lines);
+    }
+
+    showModal() {
+        this.modal.setText(this.buildModalContent());
+        this.updateModalPosition();
+        this.modal.setVisible(true);
+    }
+
+    hideModal() {
+        this.modal.setVisible(false);
+    }
+
     destroy() {
         this.text.destroy();
+        this.modal.destroy();
     }
 }
 
@@ -1267,7 +1353,7 @@ export class Simulation extends Scene {
 
     normalizeRewardEntry(entry) {
         if (!entry || typeof entry !== 'object') {
-            return { tileX: null, tileY: null, value: 0 };
+            return { tileX: null, tileY: null, value: 0, attributes: null };
         }
 
         const tileX = this.extractTileCoordinate(entry, 'x');
@@ -1277,8 +1363,11 @@ export class Simulation extends Scene {
         const value = Number.isFinite(valueCandidate)
             ? Math.trunc(valueCandidate)
             : 0;
+        const attributes = (entry.attributes && typeof entry.attributes === 'object')
+            ? { ...entry.attributes }
+            : null;
 
-        return { tileX, tileY, value };
+        return { tileX, tileY, value, attributes };
     }
 
     extractTileCoordinate(entry, axis) {
@@ -1558,8 +1647,11 @@ export class Simulation extends Scene {
             const value = Number.isFinite(rewardEntry.value)
                 ? Math.trunc(rewardEntry.value)
                 : 0;
+            const attributes = rewardEntry.attributes && typeof rewardEntry.attributes === 'object'
+                ? { ...rewardEntry.attributes }
+                : null;
 
-            const marker = new RewardMarker(this, this.grid, tileX, tileY, value);
+            const marker = new RewardMarker(this, this.grid, tileX, tileY, value, attributes);
             this.rewardMarkers.push(marker);
         });
     }
@@ -1569,41 +1661,48 @@ export class Simulation extends Scene {
             return;
         }
 
-        const totalTiles = this.grid.tileCountWidth * this.grid.tileCountHeight;
-
-        if (totalTiles <= 0) {
-            return;
-        }
-
-        const placed = new Set();
-        const attemptsPerReward = Math.max(1, Math.floor(MAX_RANDOM_PLACEMENT_ATTEMPTS / 2));
-
-        const placeReward = (value) => {
-            for (let attempt = 0; attempt < attemptsPerReward; attempt++) {
-                const candidateX = Phaser.Math.Between(0, this.grid.tileCountWidth - 1);
-                const candidateY = Phaser.Math.Between(0, this.grid.tileCountHeight - 1);
-                const key = `${candidateX},${candidateY}`;
-
-                if (placed.has(key) || this.isTileBlockedForCat(candidateX, candidateY)) {
-                    continue;
-                }
-
-                placed.add(key);
-                const marker = new RewardMarker(this, this.grid, candidateX, candidateY, value);
-                this.rewardMarkers.push(marker);
-                return true;
-            }
-
-            return false;
-        };
-
         for (let i = 0; i < DEMO_POSITIVE_REWARD_COUNT; i++) {
-            placeReward(DEMO_POSITIVE_REWARD_VALUE);
+            this.spawnDemoReward(DEMO_POSITIVE_REWARD_VALUE);
         }
 
         for (let i = 0; i < DEMO_NEGATIVE_REWARD_COUNT; i++) {
-            placeReward(DEMO_NEGATIVE_REWARD_VALUE);
+            this.spawnDemoReward(DEMO_NEGATIVE_REWARD_VALUE);
         }
+    }
+
+    spawnDemoReward(value) {
+        if (!this.grid) {
+            return false;
+        }
+
+        const attempts = Math.max(1, Math.floor(MAX_RANDOM_PLACEMENT_ATTEMPTS / 2));
+
+        for (let attempt = 0; attempt < attempts; attempt++) {
+            const candidateX = Phaser.Math.Between(0, this.grid.tileCountWidth - 1);
+            const candidateY = Phaser.Math.Between(0, this.grid.tileCountHeight - 1);
+
+            if (!this.grid.containsTile(candidateX, candidateY)) {
+                continue;
+            }
+
+            if (this.isTileOccupiedByDog(candidateX, candidateY)) {
+                continue;
+            }
+
+            const alreadyHasReward = this.rewardMarkers.some((reward) => (
+                reward.tileX === candidateX && reward.tileY === candidateY
+            ));
+
+            if (alreadyHasReward) {
+                continue;
+            }
+
+            const marker = new RewardMarker(this, this.grid, candidateX, candidateY, value);
+            this.rewardMarkers.push(marker);
+            return true;
+        }
+
+        return false;
     }
 
     isTileOccupiedByCat(tileX, tileY, ignoreCat = null) {
@@ -2051,9 +2150,40 @@ export class Simulation extends Scene {
         this.applyActiveHighlight();
     }
 
+    handleDemoRewardConsumption() {
+        if (!this.isDemoSimulation || this.rewardMarkers.length === 0 || this.cats.length === 0) {
+            return;
+        }
+
+        const occupiedTiles = new Set(
+            this.cats.map((cat) => `${cat.tileX},${cat.tileY}`)
+        );
+        const consumedMarkers = [];
+
+        this.rewardMarkers = this.rewardMarkers.filter((marker) => {
+            const locationKey = `${marker.tileX},${marker.tileY}`;
+
+            if (occupiedTiles.has(locationKey)) {
+                consumedMarkers.push(marker);
+                marker.destroy();
+                return false;
+            }
+
+            return true;
+        });
+
+        consumedMarkers.forEach((marker) => {
+            this.spawnDemoReward(marker.value);
+        });
+    }
+
     update(time) {
         this.cats.forEach((cat) => cat.update(time));
         this.dogs.forEach((dog) => dog.update(time, this.cats));
+
+        if (this.isDemoSimulation) {
+            this.handleDemoRewardConsumption();
+        }
 
         if (typeof time === 'number' && time >= this.nextStatusPanelUpdateTime) {
             this.refreshStatusPanel();
