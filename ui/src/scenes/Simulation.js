@@ -3,7 +3,6 @@ import Phaser, { Scene } from 'phaser';
 const DEFAULT_CAT_COUNT = 10;
 const DEFAULT_DOG_COUNT = 1;
 
-const DOG_ASCII = '/\\_/\\\n( o.o)\n(  ^ )\n \\___/';
 const DOG_FONT_STYLE = { fontFamily: 'Courier', fontSize: 30, color: '#f5deb3ff', align: 'center', fontStyle: 'bold' };
 
 const CAT_FACE = '^.^';
@@ -23,6 +22,26 @@ const DOG_TILE_WIDTH = 2;
 const DOG_TILE_HEIGHT = 2;
 const DOG_MOVE_INTERVAL_RANGE = { min: 2500, max: 6000 };
 const DOG_MOVE_PROBABILITY = 0.35;
+
+const CAT_BLINK_INTERVAL_RANGE = { min: 2800, max: 5200 };
+const CAT_BLINK_DURATION = 150;
+const CAT_MOUTH_INTERVAL_RANGE = { min: 3400, max: 6800 };
+const CAT_MOUTH_OPEN_DURATION = 220;
+
+const DOG_BLINK_INTERVAL_RANGE = { min: 3200, max: 6100 };
+const DOG_BLINK_DURATION = 180;
+const DOG_TONGUE_INTERVAL_RANGE = { min: 2600, max: 4800 };
+const DOG_TONGUE_OUT_DURATION = 260;
+const DOG_EYES_OPEN = 'o.o';
+const DOG_EYES_BLINK = '-.-';
+const DOG_MOUTH_IDLE = '^';
+const DOG_MOUTH_TONGUE = 'U';
+const CAT_BLINK_FACE = '-.-';
+const CAT_MOUTH_FACE = '^o^';
+
+function buildDogAscii(eyes, mouth) {
+    return `/\\_/\\\n( ${eyes})\n(  ${mouth} )\n \\___/`;
+}
 
 const CAT_ATTRIBUTE_PRESETS = [
     { cpu: '68000 8MHz', ram: '512KB' },
@@ -163,8 +182,8 @@ class Cat {
         this.scene = scene;
         this.grid = grid;
         this.speed = Phaser.Math.Between(CAT_SPEED_RANGE.min, CAT_SPEED_RANGE.max);
-        this.face = CAT_FACE;
-        this.text = scene.add.text(0, 0, this.face, CAT_FONT_STYLE);
+        this.currentFace = CAT_FACE;
+        this.text = scene.add.text(0, 0, this.currentFace, CAT_FONT_STYLE);
         this.text.setOrigin(0.5, 0.5);
         this.text.setDepth(5);
         this.text.setInteractive({ useHandCursor: true });
@@ -189,10 +208,19 @@ class Cat {
         this.targetPixelX = 0;
         this.targetPixelY = 0;
 
+        this.isBlinking = false;
+        this.blinkEndTime = 0;
+        this.nextBlinkTime = scene.time.now || 0;
+        this.isMouthOpen = false;
+        this.mouthEndTime = 0;
+        this.nextMouthOpenTime = scene.time.now || 0;
+
         this.text.on('pointerover', this.showAttributesModal, this);
         this.text.on('pointerout', this.hideAttributesModal, this);
 
         this.onGridLayoutChanged();
+        this.scheduleNextBlink(scene.time.now || 0);
+        this.scheduleNextMouthOpen(scene.time.now || 0);
     }
 
     setPosition(tileX, tileY) {
@@ -250,6 +278,62 @@ class Cat {
         this.modal.setVisible(false);
     }
 
+    scheduleNextBlink(time) {
+        this.nextBlinkTime = time + Phaser.Math.Between(
+            CAT_BLINK_INTERVAL_RANGE.min,
+            CAT_BLINK_INTERVAL_RANGE.max
+        );
+    }
+
+    scheduleNextMouthOpen(time) {
+        this.nextMouthOpenTime = time + Phaser.Math.Between(
+            CAT_MOUTH_INTERVAL_RANGE.min,
+            CAT_MOUTH_INTERVAL_RANGE.max
+        );
+    }
+
+    beginBlink(time) {
+        this.isBlinking = true;
+        this.blinkEndTime = time + CAT_BLINK_DURATION;
+    }
+
+    beginMouthOpen(time) {
+        this.isMouthOpen = true;
+        this.mouthEndTime = time + CAT_MOUTH_OPEN_DURATION;
+    }
+
+    applyCurrentFace() {
+        const targetFace = this.isBlinking
+            ? CAT_BLINK_FACE
+            : (this.isMouthOpen ? CAT_MOUTH_FACE : CAT_FACE);
+
+        if (targetFace !== this.currentFace) {
+            this.currentFace = targetFace;
+            this.text.setText(this.currentFace);
+            this.scaleToTile();
+        }
+    }
+
+    updateFacialAnimations(time) {
+        const currentTime = typeof time === 'number' ? time : 0;
+
+        if (this.isBlinking && currentTime >= this.blinkEndTime) {
+            this.isBlinking = false;
+            this.scheduleNextBlink(currentTime);
+        } else if (!this.isBlinking && currentTime >= this.nextBlinkTime) {
+            this.beginBlink(currentTime);
+        }
+
+        if (this.isMouthOpen && currentTime >= this.mouthEndTime) {
+            this.isMouthOpen = false;
+            this.scheduleNextMouthOpen(currentTime);
+        } else if (!this.isMouthOpen && currentTime >= this.nextMouthOpenTime) {
+            this.beginMouthOpen(currentTime);
+        }
+
+        this.applyCurrentFace();
+    }
+
     lookAround(time) {
         if (this.isMoving) {
             return;
@@ -290,6 +374,8 @@ class Cat {
     }
 
     update(time) {
+        this.updateFacialAnimations(time);
+
         if (this.isMoving) {
             const elapsed = time - this.moveStartTime;
             const progress = this.moveDuration > 0 ? Phaser.Math.Clamp(elapsed / this.moveDuration, 0, 1) : 1;
@@ -350,7 +436,8 @@ class Dog {
         this.tileWidth = DOG_TILE_WIDTH;
         this.tileHeight = DOG_TILE_HEIGHT;
         this.speed = Phaser.Math.Between(DOG_SPEED_RANGE.min, DOG_SPEED_RANGE.max);
-        this.text = scene.add.text(0, 0, DOG_ASCII, DOG_FONT_STYLE);
+        const initialAscii = buildDogAscii(DOG_EYES_OPEN, DOG_MOUTH_IDLE);
+        this.text = scene.add.text(0, 0, initialAscii, DOG_FONT_STYLE);
         this.text.setOrigin(0.5, 0.5);
         this.text.setDepth(5);
         this.text.setInteractive({ useHandCursor: true });
@@ -374,10 +461,20 @@ class Dog {
         this.targetPixelY = 0;
         this.nextMoveCheckTime = scene.time.now || 0;
 
+        this.isBlinking = false;
+        this.blinkEndTime = 0;
+        this.nextBlinkTime = scene.time.now || 0;
+        this.isTongueOut = false;
+        this.tongueEndTime = 0;
+        this.nextTongueTime = scene.time.now || 0;
+        this.currentAscii = initialAscii;
+
         this.text.on('pointerover', this.showAttributesModal, this);
         this.text.on('pointerout', this.hideAttributesModal, this);
 
         this.onGridLayoutChanged();
+        this.scheduleNextBlink(scene.time.now || 0);
+        this.scheduleNextTongue(scene.time.now || 0);
     }
 
     computeAreaCenter(tileX, tileY) {
@@ -480,6 +577,62 @@ class Dog {
         this.modal.setVisible(false);
     }
 
+    scheduleNextBlink(time) {
+        this.nextBlinkTime = time + Phaser.Math.Between(
+            DOG_BLINK_INTERVAL_RANGE.min,
+            DOG_BLINK_INTERVAL_RANGE.max
+        );
+    }
+
+    scheduleNextTongue(time) {
+        this.nextTongueTime = time + Phaser.Math.Between(
+            DOG_TONGUE_INTERVAL_RANGE.min,
+            DOG_TONGUE_INTERVAL_RANGE.max
+        );
+    }
+
+    beginBlink(time) {
+        this.isBlinking = true;
+        this.blinkEndTime = time + DOG_BLINK_DURATION;
+    }
+
+    beginTongue(time) {
+        this.isTongueOut = true;
+        this.tongueEndTime = time + DOG_TONGUE_OUT_DURATION;
+    }
+
+    applyFacialFeatures() {
+        const targetEyes = this.isBlinking ? DOG_EYES_BLINK : DOG_EYES_OPEN;
+        const targetMouth = this.isTongueOut ? DOG_MOUTH_TONGUE : DOG_MOUTH_IDLE;
+        const ascii = buildDogAscii(targetEyes, targetMouth);
+
+        if (ascii !== this.currentAscii) {
+            this.currentAscii = ascii;
+            this.text.setText(this.currentAscii);
+            this.scaleToTiles();
+        }
+    }
+
+    updateFacialAnimations(time) {
+        const currentTime = typeof time === 'number' ? time : 0;
+
+        if (this.isBlinking && currentTime >= this.blinkEndTime) {
+            this.isBlinking = false;
+            this.scheduleNextBlink(currentTime);
+        } else if (!this.isBlinking && currentTime >= this.nextBlinkTime) {
+            this.beginBlink(currentTime);
+        }
+
+        if (this.isTongueOut && currentTime >= this.tongueEndTime) {
+            this.isTongueOut = false;
+            this.scheduleNextTongue(currentTime);
+        } else if (!this.isTongueOut && currentTime >= this.nextTongueTime) {
+            this.beginTongue(currentTime);
+        }
+
+        this.applyFacialFeatures();
+    }
+
     findClosestCat(cats) {
         if (!cats || cats.length === 0) {
             return null;
@@ -543,6 +696,8 @@ class Dog {
     }
 
     update(time, cats) {
+        this.updateFacialAnimations(time);
+
         if (this.isMoving) {
             const elapsed = time - this.moveStartTime;
             const progress = this.moveDuration > 0 ? Phaser.Math.Clamp(elapsed / this.moveDuration, 0, 1) : 1;
