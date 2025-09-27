@@ -1,6 +1,4 @@
 import { submitImageClassificationRequest } from '../api/imageTasks';
-import { loadImageOptions } from '../media/imageOptions';
-
 export const DEFAULT_IMAGE_PROMPT = 'This is an image taken from a robots front facing camera, what is the object found in the foreground and classify if this image is dangerous or capable of being moved by a light weight robot. Respond with one of these words only DANGEROUS, MOVABLE, IMMOVABLE, UNKNOWN';
 
 function createElement(tag, className, attributes = {}) {
@@ -36,7 +34,10 @@ export class ImageClassificationModal {
         this.overlay = null;
         this.form = null;
         this.promptInput = null;
-        this.gridContainer = null;
+        this.fileInput = null;
+        this.previewContainer = null;
+        this.previewImage = null;
+        this.previewFilename = null;
         this.submitButton = null;
         this.cancelButton = null;
         this.closeButton = null;
@@ -44,13 +45,14 @@ export class ImageClassificationModal {
         this.placeholderElement = null;
         this.isBusy = false;
         this.isVisible = false;
-        this.selectedImage = null;
+        this.selectedFile = null;
+        this.selectedImageUrl = null;
         this.tileLocation = { x: null, y: null };
 
         this.handleOverlayClick = this.handleOverlayClick.bind(this);
         this.handleFormSubmit = this.handleFormSubmit.bind(this);
         this.handleCancel = this.handleCancel.bind(this);
-        this.handleOptionClick = this.handleOptionClick.bind(this);
+        this.handleFileChange = this.handleFileChange.bind(this);
         this.handleKeyDown = this.handleKeyDown.bind(this);
     }
 
@@ -89,16 +91,30 @@ export class ImageClassificationModal {
         promptLabel.appendChild(this.promptInput);
 
         const imageSection = createElement('div', 'image-modal__images');
-        const imageLabel = createElement('span', 'image-modal__label');
-        imageLabel.textContent = 'Choose a reference image';
-        this.gridContainer = createElement('div', 'image-modal__grid', {
-            role: 'listbox'
+        const imageLabel = createElement('label', 'image-modal__label');
+        imageLabel.textContent = 'Upload an image to classify';
+        this.fileInput = createElement('input', 'image-modal__file-input', {
+            type: 'file',
+            accept: 'image/*'
         });
+        imageLabel.appendChild(this.fileInput);
+
+        this.previewContainer = createElement('div', 'image-modal__preview image-modal__preview--empty');
+        this.previewImage = createElement('img', 'image-modal__preview-image', {
+            alt: 'Selected image preview'
+        });
+        this.previewFilename = createElement('span', 'image-modal__preview-filename');
+        this.previewImage.style.display = 'none';
+        this.previewFilename.style.display = 'none';
         this.placeholderElement = createElement('p', 'image-modal__placeholder');
-        this.placeholderElement.textContent = 'No images available. Add files to src/assets or define assets/manifest.json to populate this list.';
+        this.placeholderElement.textContent = 'No image selected. Choose a file from your device to include it in the request.';
+
+        this.previewContainer.appendChild(this.previewImage);
+        this.previewContainer.appendChild(this.previewFilename);
+        this.previewContainer.appendChild(this.placeholderElement);
+
         imageSection.appendChild(imageLabel);
-        imageSection.appendChild(this.gridContainer);
-        imageSection.appendChild(this.placeholderElement);
+        imageSection.appendChild(this.previewContainer);
 
         this.statusElement = createElement('p', 'image-modal__status', {
             'aria-live': 'polite'
@@ -127,7 +143,7 @@ export class ImageClassificationModal {
         this.overlay.appendChild(modal);
 
         this.overlay.addEventListener('click', this.handleOverlayClick);
-        this.gridContainer.addEventListener('click', this.handleOptionClick);
+        this.fileInput.addEventListener('change', this.handleFileChange);
         this.closeButton.addEventListener('click', this.handleCancel);
         this.cancelButton.addEventListener('click', this.handleCancel);
         this.form.addEventListener('submit', this.handleFormSubmit);
@@ -154,66 +170,14 @@ export class ImageClassificationModal {
         };
 
         this.promptInput.value = this.defaultPrompt;
-        this.selectedImage = null;
+        this.resetSelectedImage();
         this.statusElement.textContent = '';
         this.statusElement.classList.remove('image-modal__status--error', 'image-modal__status--success');
         this.overlay.classList.add('image-modal-overlay--visible');
         this.isVisible = true;
         this.overlay.focus({ preventScroll: true });
 
-        await this.populateImages();
         this.focusPrompt();
-    }
-
-    async populateImages() {
-        if (!this.gridContainer) {
-            return;
-        }
-
-        this.gridContainer.innerHTML = '';
-
-        let options = [];
-
-        try {
-            options = await loadImageOptions();
-        } catch (error) {
-            this.setStatus('Unable to load image options. Please try again.', 'error');
-            this.togglePlaceholder(true);
-            return;
-        }
-
-        const limited = Array.isArray(options) ? options.slice(0, 10) : [];
-
-        if (!limited.length) {
-            this.togglePlaceholder(true);
-            return;
-        }
-
-        this.togglePlaceholder(false);
-
-        limited.forEach((option, index) => {
-            if (!option || typeof option.src !== 'string') {
-                return;
-            }
-
-            const button = createElement('button', 'image-modal__option', {
-                type: 'button',
-                role: 'option',
-                'data-src': option.src,
-                'data-label': option.label || '',
-                'aria-label': option.label || `Image ${index + 1}`
-            });
-            const image = createElement('img', 'image-modal__thumbnail', {
-                src: option.src,
-                alt: option.label || `Image ${index + 1}`
-            });
-            const caption = createElement('span', 'image-modal__option-label');
-            caption.textContent = option.label || `Image ${index + 1}`;
-
-            button.appendChild(image);
-            button.appendChild(caption);
-            this.gridContainer.appendChild(button);
-        });
     }
 
     focusPrompt() {
@@ -226,12 +190,15 @@ export class ImageClassificationModal {
     }
 
     togglePlaceholder(shouldShow) {
-        if (!this.placeholderElement) {
+        if (!this.placeholderElement || !this.previewContainer) {
             return;
         }
 
         this.placeholderElement.style.display = shouldShow ? 'block' : 'none';
-        this.gridContainer.style.display = shouldShow ? 'none' : 'grid';
+        this.previewContainer.classList.toggle('image-modal__preview--empty', shouldShow);
+        if (this.previewFilename) {
+            this.previewFilename.style.display = shouldShow ? 'none' : 'block';
+        }
     }
 
     handleOverlayClick(event) {
@@ -259,24 +226,81 @@ export class ImageClassificationModal {
         }
     }
 
-    handleOptionClick(event) {
-        const button = event.target.closest('.image-modal__option');
-
-        if (!button || this.isBusy) {
+    handleFileChange(event) {
+        if (this.isBusy) {
+            if (this.fileInput) {
+                this.fileInput.value = '';
+            }
             return;
         }
 
-        const previouslySelected = this.gridContainer.querySelector('.image-modal__option--selected');
+        const input = event && event.target ? event.target : null;
+        const files = input && input.files ? input.files : null;
+        const file = files && files.length > 0 ? files[0] : null;
 
-        if (previouslySelected) {
-            previouslySelected.classList.remove('image-modal__option--selected');
+        if (!file) {
+            if (this.fileInput) {
+                this.fileInput.value = '';
+            }
+            return;
         }
 
-        button.classList.add('image-modal__option--selected');
-        this.selectedImage = {
-            src: button.getAttribute('data-src'),
-            label: button.getAttribute('data-label')
-        };
+        if (file.type && !file.type.startsWith('image/')) {
+            this.setStatus('Please choose an image file (png, jpg, gif, webp, or avif).', 'error');
+            if (this.fileInput) {
+                this.fileInput.value = '';
+            }
+            return;
+        }
+
+        this.resetSelectedImage();
+        this.selectedFile = file;
+        const label = typeof file.name === 'string' && file.name.trim().length > 0
+            ? file.name.trim()
+            : 'Uploaded image';
+
+        this.selectedImageUrl = URL.createObjectURL(file);
+
+        if (this.previewImage) {
+            this.previewImage.src = this.selectedImageUrl;
+            this.previewImage.style.display = 'block';
+        }
+
+        if (this.previewFilename) {
+            this.previewFilename.textContent = label;
+            this.previewFilename.style.display = 'block';
+        }
+
+        this.togglePlaceholder(false);
+        this.setStatus('', 'info');
+    }
+
+    resetSelectedImage() {
+        this.revokeSelectedImageUrl();
+        this.selectedFile = null;
+
+        if (this.fileInput) {
+            this.fileInput.value = '';
+        }
+
+        if (this.previewImage) {
+            this.previewImage.removeAttribute('src');
+            this.previewImage.style.display = 'none';
+        }
+
+        if (this.previewFilename) {
+            this.previewFilename.textContent = '';
+            this.previewFilename.style.display = 'none';
+        }
+
+        this.togglePlaceholder(true);
+    }
+
+    revokeSelectedImageUrl() {
+        if (this.selectedImageUrl) {
+            URL.revokeObjectURL(this.selectedImageUrl);
+            this.selectedImageUrl = null;
+        }
     }
 
     async handleFormSubmit(event) {
@@ -286,8 +310,8 @@ export class ImageClassificationModal {
             return;
         }
 
-        if (!this.selectedImage || !this.selectedImage.src) {
-            this.setStatus('Select an image to continue.', 'error');
+        if (!this.selectedFile) {
+            this.setStatus('Upload an image to continue.', 'error');
             return;
         }
 
@@ -298,11 +322,11 @@ export class ImageClassificationModal {
 
         try {
             const response = await submitImageClassificationRequest({
-                imagePath: this.selectedImage.src,
+                file: this.selectedFile,
                 prompt: promptText,
                 tileX: this.tileLocation.x,
                 tileY: this.tileLocation.y,
-                imageLabel: this.selectedImage.label
+                imageLabel: this.selectedFile && this.selectedFile.name ? this.selectedFile.name : ''
             });
 
             const taskId = response && typeof response.task_id === 'string' ? response.task_id : null;
@@ -341,8 +365,12 @@ export class ImageClassificationModal {
             this.promptInput.disabled = this.isBusy;
         }
 
-        if (this.gridContainer) {
-            this.gridContainer.classList.toggle('image-modal__grid--disabled', this.isBusy);
+        if (this.fileInput) {
+            this.fileInput.disabled = this.isBusy;
+        }
+
+        if (this.previewContainer) {
+            this.previewContainer.classList.toggle('image-modal__preview--disabled', this.isBusy);
         }
     }
 
@@ -373,6 +401,7 @@ export class ImageClassificationModal {
         this.overlay.classList.remove('image-modal-overlay--visible');
         this.isVisible = false;
         this.setBusy(false);
+        this.resetSelectedImage();
     }
 
     destroy() {
@@ -382,8 +411,8 @@ export class ImageClassificationModal {
 
         this.overlay.removeEventListener('click', this.handleOverlayClick);
 
-        if (this.gridContainer) {
-            this.gridContainer.removeEventListener('click', this.handleOptionClick);
+        if (this.fileInput) {
+            this.fileInput.removeEventListener('change', this.handleFileChange);
         }
 
         if (this.closeButton) {
@@ -404,16 +433,21 @@ export class ImageClassificationModal {
             this.overlay.parentNode.removeChild(this.overlay);
         }
 
+        this.revokeSelectedImageUrl();
+
         this.overlay = null;
         this.form = null;
         this.promptInput = null;
-        this.gridContainer = null;
+        this.fileInput = null;
+        this.previewContainer = null;
+        this.previewImage = null;
+        this.previewFilename = null;
         this.submitButton = null;
         this.cancelButton = null;
         this.closeButton = null;
         this.statusElement = null;
         this.placeholderElement = null;
-        this.selectedImage = null;
+        this.selectedFile = null;
         this.isVisible = false;
         this.isBusy = false;
     }

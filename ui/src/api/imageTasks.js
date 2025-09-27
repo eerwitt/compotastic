@@ -70,7 +70,23 @@ function buildTasksUrl() {
     return `${normalized || 'http://localhost:8001'}/tasks`;
 }
 
+function isFileLike(candidate) {
+    if (!candidate) {
+        return false;
+    }
+
+    if (candidate instanceof Blob) {
+        return true;
+    }
+
+    const size = typeof candidate.size === 'number' ? candidate.size : null;
+    const slice = typeof candidate.slice === 'function';
+
+    return Number.isFinite(size) && slice;
+}
+
 export async function submitImageClassificationRequest({
+    file,
     imagePath,
     prompt,
     tileX,
@@ -83,29 +99,53 @@ export async function submitImageClassificationRequest({
         throw new Error('Please provide a description for the image classification request.');
     }
 
-    if (typeof imagePath !== 'string' || imagePath.trim().length === 0) {
-        throw new Error('Please select an image before submitting.');
+    const hasUpload = isFileLike(file);
+    const trimmedPath = typeof imagePath === 'string' ? imagePath.trim() : '';
+
+    if (!hasUpload && trimmedPath.length === 0) {
+        throw new Error('Please select or upload an image before submitting.');
     }
 
-    const blob = await loadImageBlob(imagePath);
-    const filename = deriveFilename(imagePath);
-    const fileLike = ensureFile(blob, filename);
+    let fileLike = null;
+    let filename = '';
+    let metadataPath = '';
+
+    if (hasUpload) {
+        fileLike = file;
+        const candidateName = typeof file.name === 'string' ? file.name : null;
+        filename = candidateName && candidateName.trim().length > 0
+            ? candidateName.trim()
+            : deriveFilename(trimmedPath);
+        metadataPath = '';
+    } else {
+        const blob = await loadImageBlob(trimmedPath);
+        filename = deriveFilename(trimmedPath);
+        fileLike = ensureFile(blob, filename);
+        metadataPath = trimmedPath;
+    }
+
+    const normalizedFilename = filename && filename.trim().length > 0
+        ? filename.trim()
+        : `image-${Date.now()}`;
+    const normalizedLabel = typeof imageLabel === 'string' && imageLabel.trim().length > 0
+        ? imageLabel.trim()
+        : normalizedFilename;
     const metadata = buildMetadata({
         prompt: sanitizedPrompt,
         tileX,
         tileY,
-        imagePath,
-        imageLabel,
-        filename
+        imagePath: metadataPath,
+        imageLabel: normalizedLabel,
+        filename: normalizedFilename
     });
 
     const formData = new FormData();
     formData.append('metadata', JSON.stringify(metadata));
 
-    if (fileLike instanceof Blob && 'name' in fileLike) {
-        formData.append('file', fileLike, filename);
+    if (fileLike instanceof Blob) {
+        formData.append('file', fileLike, normalizedFilename);
     } else {
-        formData.append('file', fileLike, filename);
+        formData.append('file', fileLike, normalizedFilename);
     }
 
     const response = await fetch(buildTasksUrl(), {
