@@ -47,6 +47,7 @@ class SimulationSnapshot:
     cats: List[MeshtasticNode]
     dogs: List[MeshtasticNode]
     rewards: List[RewardTile]
+    alerts: Dict[str, str]
 
 
 class MeshSimulation:
@@ -97,6 +98,7 @@ class MeshSimulation:
             positive_reward_value=positive_reward_value,
             negative_reward_value=negative_reward_value,
         )
+        self._alerts: Dict[str, str] = {}
         self._environment = GridWorldEnvironment(
             width,
             height,
@@ -133,6 +135,7 @@ class MeshSimulation:
             cats=list(self._cats),
             dogs=list(self._dogs),
             rewards=list(self._reward_tiles),
+            alerts=dict(self._alerts),
         )
 
     @property
@@ -192,6 +195,7 @@ class MeshSimulation:
         self._cats = self._advance_group(
             self._cats,
             occupied_for_cats,
+            agent_type="cat",
             idle_probability=self._cat_idle_chance,
         )
 
@@ -210,6 +214,7 @@ class MeshSimulation:
         self._dogs = self._advance_group(
             self._dogs,
             occupied_for_dogs,
+            agent_type="dog",
             idle_probability=dog_idle_probability,
         )
 
@@ -269,6 +274,7 @@ class MeshSimulation:
         nodes: Sequence[MeshtasticNode],
         occupied: CoordinateSet,
         *,
+        agent_type: str,
         idle_probability: float,
     ) -> List[MeshtasticNode]:
         updated: List[MeshtasticNode] = []
@@ -277,6 +283,7 @@ class MeshSimulation:
             next_node = self._move_node(
                 node,
                 occupied,
+                agent_type=agent_type,
                 idle_probability=idle_probability,
             )
             occupied.add((next_node.location.x, next_node.location.y))
@@ -288,21 +295,42 @@ class MeshSimulation:
         node: MeshtasticNode,
         occupied: CoordinateSet,
         *,
+        agent_type: str,
         idle_probability: float,
     ) -> MeshtasticNode:
         idle_probability = float(idle_probability)
         idle_probability = min(max(idle_probability, 0.0), 1.0)
 
         if self._rng.random() < idle_probability:
+            if agent_type == "dog":
+                self._clear_alert(node.identifier)
             return self._drain_battery(node)
 
         surroundings = self._environment.surroundings_for(node.location)
         actions = list(surroundings.available_actions())
 
         if not actions:
-            return self._drain_battery(node)
+            return self._handle_no_available_actions(node, agent_type)
 
-        ranked_actions = self._rank_actions(node, actions)
+        if agent_type == "cat":
+            reward_here = self._environment.reward_at(node.location)
+            if reward_here > 0 and int(Action.DO_WORK) in actions:
+                self._log(
+                    f"Cat {node.identifier} discovered reward tile worth {reward_here} at {node.location}"
+                )
+                _, working_node, reward, _ = self._environment.step(
+                    node,
+                    int(Action.DO_WORK),
+                )
+                self._consume_reward_tile(working_node.location, reward)
+                self._broadcast_state_update(working_node, reward)
+                return self._drain_battery(working_node)
+
+        ranked_actions = self._rank_actions(
+            node,
+            actions,
+            allow_stop=agent_type != "cat",
+        )
 
         for action in ranked_actions:
             try:
@@ -320,22 +348,35 @@ class MeshSimulation:
                     continue
 
             _, candidate, _, _ = self._environment.step(node, int(action))
+            if agent_type == "dog":
+                self._clear_alert(node.identifier)
             return self._drain_battery(candidate)
 
-        return self._enter_stop_state(node, reason="No viable action from trained model")
+        if agent_type == "cat":
+            return self._fallback_cat_action(node, actions, occupied)
+
+        return self._handle_no_viable_action(node, reason="No viable action from trained model")
 
     def _rank_actions(
         self,
         node: MeshtasticNode,
         available_actions: Sequence[int],
+        *,
+        allow_stop: bool,
     ) -> List[int]:
+        filtered_actions = [
+            int(action)
+            for action in available_actions
+            if allow_stop or int(action) != int(Action.STOP)
+        ]
+
         model = self._models.get(node.identifier)
         if model is None:
             self._log(
                 f"[mesh-warning] Node {node.identifier} lacks a trained model; broadcasting stop request"
             )
             self._broadcast_model_request(node)
-            return [int(Action.STOP)]
+            return [int(Action.STOP)] if allow_stop else []
 
         try:
             state = self._environment.encode_state(node.location)
@@ -344,7 +385,7 @@ class MeshSimulation:
                 f"[mesh-warning] Unable to encode state for node {node.identifier}; requesting assistance"
             )
             self._broadcast_model_request(node)
-            return [int(Action.STOP)]
+            return [int(Action.STOP)] if allow_stop else []
 
         policy_action = model.policy(state)
         if policy_action is None:
@@ -352,26 +393,93 @@ class MeshSimulation:
                 f"[mesh-warning] Model for node {node.identifier} has no policy; requesting assistance"
             )
             self._broadcast_model_request(node)
-            return [int(Action.STOP)]
+            return [int(Action.STOP)] if allow_stop else []
 
         ranked = sorted(
-            (int(action) for action in available_actions),
+            filtered_actions if filtered_actions else [int(action) for action in available_actions],
             key=lambda action: model.get_q_value(state, int(action)),
             reverse=True,
         )
 
         preferred_action = int(policy_action)
+        if not allow_stop and preferred_action == int(Action.STOP):
+            preferred_action = next(
+                (action for action in ranked if action != int(Action.STOP)),
+                None,
+            )
 
-        if not ranked or preferred_action not in ranked:
+        if not ranked or preferred_action is None or preferred_action not in ranked:
             self._log(
                 f"[mesh-warning] Model for node {node.identifier} proposed unavailable action; requesting assistance"
             )
             self._broadcast_model_request(node)
-            return [int(Action.STOP)]
+            return [int(Action.STOP)] if allow_stop else []
 
         ordered_actions = [preferred_action]
         ordered_actions.extend(action for action in ranked if action != preferred_action)
         return ordered_actions
+
+    def _fallback_cat_action(
+        self,
+        node: MeshtasticNode,
+        available_actions: Sequence[int],
+        occupied: CoordinateSet,
+    ) -> MeshtasticNode:
+        movement_actions = [
+            int(action)
+            for action in available_actions
+            if int(action) in {int(a) for a in _ACTION_TO_VECTOR}
+        ]
+        if movement_actions:
+            self._rng.shuffle(movement_actions)
+            for action in movement_actions:
+                resolved = Action(int(action))
+                dx, dy = _ACTION_TO_VECTOR[resolved]
+                candidate_position = (
+                    node.location.x + dx,
+                    node.location.y + dy,
+                )
+                if candidate_position in occupied:
+                    continue
+                _, candidate, _, _ = self._environment.step(node, int(action))
+                return self._drain_battery(candidate)
+
+        if int(Action.DO_WORK) in available_actions:
+            _, working_node, _, _ = self._environment.step(
+                node,
+                int(Action.DO_WORK),
+            )
+            return self._drain_battery(working_node)
+
+        self._log(
+            f"[mesh-info] Cat {node.identifier} maintaining position due to lack of viable actions"
+        )
+        return self._drain_battery(node)
+
+    def _handle_no_available_actions(
+        self,
+        node: MeshtasticNode,
+        agent_type: str,
+    ) -> MeshtasticNode:
+        if agent_type == "dog":
+            return self._handle_no_viable_action(
+                node,
+                reason="Dog has no available actions",
+            )
+
+        self._log(
+            f"[mesh-info] Cat {node.identifier} encountered no available actions; remaining on station"
+        )
+        return self._drain_battery(node)
+
+    def _handle_no_viable_action(
+        self,
+        node: MeshtasticNode,
+        *,
+        reason: str,
+    ) -> MeshtasticNode:
+        self._set_alert(node.identifier, reason)
+        return self._enter_stop_state(node, reason=reason)
 
     def _enter_stop_state(
         self,
@@ -388,6 +496,30 @@ class MeshSimulation:
         self._log(
             f"Node {node.identifier} is requesting updated Q-learning model via mesh network"
         )
+
+    def _broadcast_state_update(self, node: MeshtasticNode, reward: int) -> None:
+        self._log(
+            f"Node {node.identifier} broadcast state update after consuming reward {reward} at {node.location}"
+        )
+
+    def _consume_reward_tile(self, location: GridLocation, reward_value: int) -> None:
+        if reward_value == 0:
+            return
+        self._environment.set_reward(location, 0)
+        self._reward_tiles = [
+            tile for tile in self._reward_tiles if tile.location != location
+        ]
+
+    def _set_alert(self, identifier: str, message: str) -> None:
+        self._alerts[identifier] = message
+        self._log(
+            f"[mesh-info] Node {identifier} entered alert state: {message}"
+        )
+
+    def _clear_alert(self, identifier: str) -> None:
+        if identifier in self._alerts:
+            self._alerts.pop(identifier, None)
+            self._log(f"[mesh-info] Node {identifier} cleared alert state")
 
     def _drain_battery(self, node: MeshtasticNode) -> MeshtasticNode:
         drain_amount = self._rng.uniform(0.05, 0.35)
