@@ -288,6 +288,24 @@ class GridWorldEnvironment:
 
         return self._rewards.get((location.x, location.y), 0)
 
+    def set_reward(self, location: GridLocation, value: int) -> None:
+        """Assign a reward to the specified interior location."""
+
+        if not isinstance(value, int):
+            raise TypeError("Rewards must be provided as integers")
+        if not self.is_passable(location):
+            raise ValueError("Rewards may only be placed on passable interior tiles")
+        coordinate = (location.x, location.y)
+        if value == 0:
+            self._rewards.pop(coordinate, None)
+        else:
+            self._rewards[coordinate] = value
+
+    def rewards(self) -> Dict[Tuple[int, int], int]:
+        """Return a shallow copy of the configured reward mapping."""
+
+        return dict(self._rewards)
+
     def step(
         self,
         node: MeshtasticNode,
