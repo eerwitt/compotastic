@@ -7,9 +7,8 @@ const CAT_TILE_PADDING_RATIO = 0.2;
 const CAT_SPEED_RANGE = { min: 40, max: 140 };
 const LOOK_INTERVAL_RANGE = { min: 800, max: 2200 };
 const GRID_TILE_COUNT = { width: 250, height: 250 };
-const GRID_TILE_SIZE = 32;
-const GRID_COLOR = 0x615a3b;
-const GRID_ALPHA = 0.2;
+const GRID_LINE_COLOR = 0x615a3b;
+const GRID_LINE_ALPHA = 0.2;
 
 const DIRECTIONS = [
     { x: 0, y: -1 },
@@ -18,33 +17,77 @@ const DIRECTIONS = [
     { x: -1, y: 0 }
 ];
 
-function tileToWorld(tileX, tileY) {
-    return {
-        x: tileX * GRID_TILE_SIZE + GRID_TILE_SIZE / 2,
-        y: tileY * GRID_TILE_SIZE + GRID_TILE_SIZE / 2
-    };
-}
+class Grid {
+    constructor(scene, tileCountWidth, tileCountHeight) {
+        this.scene = scene;
+        this.tileCountWidth = tileCountWidth;
+        this.tileCountHeight = tileCountHeight;
+        this.tileSize = 1;
+        this.pixelWidth = tileCountWidth;
+        this.pixelHeight = tileCountHeight;
+        this.graphics = scene.add.graphics();
+        this.graphics.setDepth(-1);
+    }
 
-function isInsideGrid(tileX, tileY) {
-    return (
-        tileX >= 0 &&
-        tileY >= 0 &&
-        tileX < GRID_TILE_COUNT.width &&
-        tileY < GRID_TILE_COUNT.height
-    );
+    updateLayout(viewWidth, viewHeight) {
+        const tileSize = Math.max(1, Math.floor(Math.min(
+            viewWidth / this.tileCountWidth,
+            viewHeight / this.tileCountHeight
+        )));
+
+        this.tileSize = tileSize;
+        this.pixelWidth = this.tileCountWidth * tileSize;
+        this.pixelHeight = this.tileCountHeight * tileSize;
+
+        this.draw();
+    }
+
+    draw() {
+        this.graphics.clear();
+        this.graphics.lineStyle(1, GRID_LINE_COLOR, GRID_LINE_ALPHA);
+
+        for (let x = 0; x <= this.tileCountWidth; x++) {
+            const positionX = x * this.tileSize;
+            this.graphics.lineBetween(positionX, 0, positionX, this.pixelHeight);
+        }
+
+        for (let y = 0; y <= this.tileCountHeight; y++) {
+            const positionY = y * this.tileSize;
+            this.graphics.lineBetween(0, positionY, this.pixelWidth, positionY);
+        }
+    }
+
+    tileToWorld(tileX, tileY) {
+        return {
+            x: tileX * this.tileSize + this.tileSize / 2,
+            y: tileY * this.tileSize + this.tileSize / 2
+        };
+    }
+
+    containsTile(tileX, tileY) {
+        return (
+            tileX >= 0 &&
+            tileY >= 0 &&
+            tileX < this.tileCountWidth &&
+            tileY < this.tileCountHeight
+        );
+    }
+
+    destroy() {
+        this.graphics.destroy();
+    }
 }
 
 class Cat {
-    constructor(scene, tileX, tileY) {
+    constructor(scene, grid, tileX, tileY) {
         this.scene = scene;
+        this.grid = grid;
         this.speed = Phaser.Math.Between(CAT_SPEED_RANGE.min, CAT_SPEED_RANGE.max);
         this.text = scene.add.text(0, 0, CAT_ASCII, CAT_FONT_STYLE);
         this.text.setOrigin(0.5, 0.5);
-        this.scaleToTile();
 
         this.tileX = tileX;
         this.tileY = tileY;
-        this.setPosition(tileX, tileY);
 
         this.nextLookTime = scene.time.now || 0;
         this.isMoving = false;
@@ -54,12 +97,14 @@ class Cat {
         this.startPixelY = 0;
         this.targetTileX = tileX;
         this.targetTileY = tileY;
-        this.targetPixelX = this.text.x;
-        this.targetPixelY = this.text.y;
+        this.targetPixelX = 0;
+        this.targetPixelY = 0;
+
+        this.onGridLayoutChanged();
     }
 
     setPosition(tileX, tileY) {
-        const position = tileToWorld(tileX, tileY);
+        const position = this.grid.tileToWorld(tileX, tileY);
 
         this.tileX = tileX;
         this.tileY = tileY;
@@ -70,10 +115,11 @@ class Cat {
     }
 
     scaleToTile() {
-        const horizontalPadding = GRID_TILE_SIZE * CAT_TILE_PADDING_RATIO;
-        const verticalPadding = GRID_TILE_SIZE * CAT_TILE_PADDING_RATIO;
-        const maxWidth = GRID_TILE_SIZE - horizontalPadding;
-        const maxHeight = GRID_TILE_SIZE - verticalPadding;
+        const tileSize = this.grid.tileSize;
+        const horizontalPadding = tileSize * CAT_TILE_PADDING_RATIO;
+        const verticalPadding = tileSize * CAT_TILE_PADDING_RATIO;
+        const maxWidth = tileSize - horizontalPadding;
+        const maxHeight = tileSize - verticalPadding;
         const textWidth = this.text.width;
         const textHeight = this.text.height;
 
@@ -93,7 +139,7 @@ class Cat {
         }
 
         const availableDirections = DIRECTIONS.filter((direction) =>
-            isInsideGrid(this.tileX + direction.x, this.tileY + direction.y)
+            this.grid.containsTile(this.tileX + direction.x, this.tileY + direction.y)
         );
 
         if (availableDirections.length === 0) {
@@ -106,7 +152,7 @@ class Cat {
         this.targetTileX = this.tileX + selectedDirection.x;
         this.targetTileY = this.tileY + selectedDirection.y;
 
-        const targetPosition = tileToWorld(this.targetTileX, this.targetTileY);
+        const targetPosition = this.grid.tileToWorld(this.targetTileX, this.targetTileY);
 
         this.startPixelX = this.text.x;
         this.startPixelY = this.text.y;
@@ -153,6 +199,13 @@ class Cat {
     scheduleNextLook(time) {
         this.nextLookTime = time + Phaser.Math.Between(LOOK_INTERVAL_RANGE.min, LOOK_INTERVAL_RANGE.max);
     }
+
+    onGridLayoutChanged() {
+        this.scaleToTile();
+        this.setPosition(this.tileX, this.tileY);
+        this.isMoving = false;
+        this.scheduleNextLook(this.scene.time.now || 0);
+    }
 }
 
 export class Simulation extends Scene {
@@ -160,6 +213,9 @@ export class Simulation extends Scene {
         super('Simulation');
 
         this.cats = [];
+        this.grid = null;
+
+        this.handleResize = this.handleResize.bind(this);
     }
 
     preload() {
@@ -169,20 +225,24 @@ export class Simulation extends Scene {
     create() {
         this.cameras.main.setBackgroundColor('#3c341bff');
 
-        this.gridPixelWidth = GRID_TILE_COUNT.width * GRID_TILE_SIZE;
-        this.gridPixelHeight = GRID_TILE_COUNT.height * GRID_TILE_SIZE;
+        this.grid = new Grid(this, GRID_TILE_COUNT.width, GRID_TILE_COUNT.height);
+        this.handleResize(this.scale.gameSize);
+        this.scale.on('resize', this.handleResize);
 
-        this.physics.world.setBounds(0, 0, this.gridPixelWidth, this.gridPixelHeight);
-        this.cameras.main.setBounds(0, 0, this.gridPixelWidth, this.gridPixelHeight);
-        this.cameras.main.centerOn(this.gridPixelWidth / 2, this.gridPixelHeight / 2);
+        this.events.once('shutdown', () => {
+            this.scale.off('resize', this.handleResize);
 
-        this.drawGrid();
+            if (this.grid) {
+                this.grid.destroy();
+                this.grid = null;
+            }
+        });
 
         for (let i = 0; i < DEFAULT_CAT_COUNT; i++) {
             const tileX = Phaser.Math.Between(0, GRID_TILE_COUNT.width - 1);
             const tileY = Phaser.Math.Between(0, GRID_TILE_COUNT.height - 1);
 
-            const cat = new Cat(this, tileX, tileY);
+            const cat = new Cat(this, this.grid, tileX, tileY);
 
             cat.lookAround(this.time.now || 0);
             this.cats.push(cat);
@@ -193,18 +253,19 @@ export class Simulation extends Scene {
         this.cats.forEach((cat) => cat.update(time));
     }
 
-    drawGrid() {
-        const graphics = this.add.graphics();
-        graphics.lineStyle(1, GRID_COLOR, GRID_ALPHA);
-
-        for (let x = 0; x <= GRID_TILE_COUNT.width; x++) {
-            const positionX = x * GRID_TILE_SIZE;
-            graphics.lineBetween(positionX, 0, positionX, this.gridPixelHeight);
+    handleResize(gameSize) {
+        if (!this.grid) {
+            return;
         }
 
-        for (let y = 0; y <= GRID_TILE_COUNT.height; y++) {
-            const positionY = y * GRID_TILE_SIZE;
-            graphics.lineBetween(0, positionY, this.gridPixelWidth, positionY);
-        }
+        const { width, height } = gameSize || this.scale.gameSize;
+
+        this.grid.updateLayout(width, height);
+
+        this.physics.world.setBounds(0, 0, this.grid.pixelWidth, this.grid.pixelHeight);
+        this.cameras.main.setBounds(0, 0, this.grid.pixelWidth, this.grid.pixelHeight);
+        this.cameras.main.centerOn(this.grid.pixelWidth / 2, this.grid.pixelHeight / 2);
+
+        this.cats.forEach((cat) => cat.onGridLayoutChanged());
     }
 }
