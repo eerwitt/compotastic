@@ -242,6 +242,7 @@ class GridWorldEnvironment:
             for (x, y), value in (rewards or {}).items()
         }
         self._log = log_callback or _default_logger
+        self._node_states: Dict[str, MeshtasticNode] = {}
 
     def _within_bounds(self, location: GridLocation) -> bool:
         return 0 <= location.x < self.width and 0 <= location.y < self.height
@@ -301,40 +302,64 @@ class GridWorldEnvironment:
         except ValueError as exc:
             raise ValueError(f"Unknown action: {action}") from exc
 
-        surroundings = self.surroundings_for(node.location)
+        active_node = self._node_states.get(node.identifier)
+        if active_node is None:
+            active_node = node
+        else:
+            if (
+                node.battery_level != active_node.battery_level
+                or node.compute_efficiency_flops_per_milliamp
+                != active_node.compute_efficiency_flops_per_milliamp
+            ):
+                active_node = replace(
+                    active_node,
+                    battery_level=node.battery_level,
+                    compute_efficiency_flops_per_milliamp=
+                        node.compute_efficiency_flops_per_milliamp,
+                )
+        self._node_states[node.identifier] = active_node
+
+        surroundings = self.surroundings_for(active_node.location)
         available_actions = surroundings.available_actions()
         if action not in available_actions:
             self._log(
-                f"Action {resolved_action.name} is unavailable at location {node.location}"
+                f"Action {resolved_action.name} is unavailable at location {active_node.location}"
             )
-            return self.encode_state(node.location), node, -1, False
+            self._node_states[node.identifier] = active_node
+            return self.encode_state(active_node.location), active_node, -1, False
 
         if resolved_action in _ACTION_TO_VECTOR:
             dx, dy = _ACTION_TO_VECTOR[resolved_action]
-            new_location = node.location.translated(dx, dy)
+            new_location = active_node.location.translated(dx, dy)
             if not self.is_passable(new_location):
                 self._log(
                     "Attempted to move into impassable border at %s", new_location
                 )
-                return self.encode_state(node.location), node, -1, False
+                self._node_states[node.identifier] = active_node
+                return self.encode_state(active_node.location), active_node, -1, False
             reward = self.reward_at(new_location)
-            updated_node = node.with_location(new_location)
+            updated_node = active_node.with_location(new_location)
+            self._node_states[node.identifier] = updated_node
             return self.encode_state(new_location), updated_node, reward, False
 
         if resolved_action is Action.DO_WORK:
-            reward = self.reward_at(node.location)
-            return self.encode_state(node.location), node, reward, False
+            reward = self.reward_at(active_node.location)
+            self._node_states[node.identifier] = active_node
+            return self.encode_state(active_node.location), active_node, reward, False
 
         if resolved_action is Action.STOP:
-            return self.encode_state(node.location), node, 0, True
+            self._node_states[node.identifier] = active_node
+            return self.encode_state(active_node.location), active_node, 0, True
 
         if resolved_action is Action.CALL_FOR_HELP:
             self._log(
-                f"Node {node.identifier} requested assistance at {node.location}"
+                f"Node {node.identifier} requested assistance at {active_node.location}"
             )
-            return self.encode_state(node.location), node, -1, False
+            self._node_states[node.identifier] = active_node
+            return self.encode_state(active_node.location), active_node, -1, False
 
-        return self.encode_state(node.location), node, 0, False
+        self._node_states[node.identifier] = active_node
+        return self.encode_state(active_node.location), active_node, 0, False
 
 
 class QLearningAgent:
