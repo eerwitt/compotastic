@@ -344,6 +344,9 @@ class Cat {
         const initialTime = scene.time.now || 0;
         this.scheduleNextBlink(initialTime, { usePhaseOffset: true });
         this.scheduleNextMouthOpen(initialTime, { usePhaseOffset: true });
+        this.movementLog = [];
+        this.maxMovementLogEntries = 40;
+        this.recordMovementLog(`Initialized at (${this.tileX}, ${this.tileY})`, initialTime);
     }
 
     setPosition(tileX, tileY) {
@@ -534,6 +537,7 @@ class Cat {
             return;
         }
 
+        this.recordMovementLog('Scanning for available paths', time);
         const availableDirections = DIRECTIONS.filter((direction) => {
             const nextTileX = this.tileX + direction.x;
             const nextTileY = this.tileY + direction.y;
@@ -546,6 +550,7 @@ class Cat {
         });
 
         if (availableDirections.length === 0) {
+            this.recordMovementLog(`No movement options from (${this.tileX}, ${this.tileY})`, time);
             this.scheduleNextLook(time);
             return;
         }
@@ -554,6 +559,10 @@ class Cat {
 
         this.targetTileX = this.tileX + selectedDirection.x;
         this.targetTileY = this.tileY + selectedDirection.y;
+        this.recordMovementLog(
+            `Planning move toward (${this.targetTileX}, ${this.targetTileY})`,
+            time
+        );
 
         const targetPosition = this.grid.tileToWorld(this.targetTileX, this.targetTileY);
 
@@ -573,6 +582,10 @@ class Cat {
         this.moveStartTime = time;
         this.isMoving = true;
         this.nextLookTime = Number.POSITIVE_INFINITY;
+        this.recordMovementLog(
+            `Started moving toward (${this.targetTileX}, ${this.targetTileY})`,
+            time
+        );
     }
 
     update(time) {
@@ -591,6 +604,10 @@ class Cat {
                 this.isMoving = false;
                 this.setPosition(this.targetTileX, this.targetTileY);
                 this.scheduleNextLook(time);
+                this.recordMovementLog(
+                    `Arrived at (${this.tileX}, ${this.tileY})`,
+                    time
+                );
             }
 
             if (this.modal.visible) {
@@ -629,6 +646,37 @@ class Cat {
     destroy() {
         this.text.destroy();
         this.modal.destroy();
+    }
+
+    recordMovementLog(message, time) {
+        if (typeof message !== 'string' || message.trim().length === 0) {
+            return;
+        }
+
+        const now = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+        const entry = {
+            timestamp: now,
+            timeLabel: this.formatMovementLogTime(now),
+            message: message.trim()
+        };
+
+        this.movementLog.push(entry);
+
+        if (this.movementLog.length > this.maxMovementLogEntries) {
+            this.movementLog.splice(0, this.movementLog.length - this.maxMovementLogEntries);
+        }
+    }
+
+    formatMovementLogTime(time) {
+        if (!Number.isFinite(time) || time < 0) {
+            return '0.0s';
+        }
+
+        return `${(time / 1000).toFixed(1)}s`;
+    }
+
+    getMovementLog() {
+        return this.movementLog.map((entry) => ({ ...entry }));
     }
 }
 
@@ -682,6 +730,12 @@ class Dog {
         const initialTime = scene.time.now || 0;
         this.scheduleNextBlink(initialTime, { usePhaseOffset: true });
         this.scheduleNextTongue(initialTime, { usePhaseOffset: true });
+        this.movementLog = [];
+        this.maxMovementLogEntries = 40;
+        this.recordMovementLog(
+            `Initialized at (${this.tileX}, ${this.tileY}) area ${this.tileWidth}x${this.tileHeight}`,
+            initialTime
+        );
     }
 
     computeAreaCenter(tileX, tileY) {
@@ -756,6 +810,10 @@ class Dog {
         this.moveDuration = distance > 0 ? (distance / this.speed) * 1000 : 0;
         this.moveStartTime = time;
         this.isMoving = true;
+        this.recordMovementLog(
+            `Started patrol toward (${this.targetTileX}, ${this.targetTileY})`,
+            time
+        );
     }
 
     buildModalContent() {
@@ -922,6 +980,10 @@ class Dog {
                 this.isMoving = false;
                 this.setPosition(this.targetTileX, this.targetTileY);
                 this.scheduleNextMoveCheck(time);
+                this.recordMovementLog(
+                    `Arrived at (${this.tileX}, ${this.tileY})`,
+                    time
+                );
             }
 
             return;
@@ -937,12 +999,18 @@ class Dog {
         }
 
         this.scheduleNextMoveCheck(time);
+        this.recordMovementLog(
+            `Evaluating patrol options from (${this.tileX}, ${this.tileY})`,
+            time
+        );
 
         if (!cats || cats.length === 0) {
+            this.recordMovementLog('No cats detected — holding position', time);
             return;
         }
 
         if (Phaser.Math.FloatBetween(0, 1) > DOG_MOVE_PROBABILITY) {
+            this.recordMovementLog('Staying put after patrol evaluation', time);
             return;
         }
 
@@ -950,6 +1018,7 @@ class Dog {
         const move = this.determineStepToward(targetCat);
 
         if (!move) {
+            this.recordMovementLog('No viable path toward nearest cat', time);
             return;
         }
 
@@ -971,6 +1040,37 @@ class Dog {
     destroy() {
         this.text.destroy();
         this.modal.destroy();
+    }
+
+    recordMovementLog(message, time) {
+        if (typeof message !== 'string' || message.trim().length === 0) {
+            return;
+        }
+
+        const now = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+        const entry = {
+            timestamp: now,
+            timeLabel: this.formatMovementLogTime(now),
+            message: message.trim()
+        };
+
+        this.movementLog.push(entry);
+
+        if (this.movementLog.length > this.maxMovementLogEntries) {
+            this.movementLog.splice(0, this.movementLog.length - this.maxMovementLogEntries);
+        }
+    }
+
+    formatMovementLogTime(time) {
+        if (!Number.isFinite(time) || time < 0) {
+            return '0.0s';
+        }
+
+        return `${(time / 1000).toFixed(1)}s`;
+    }
+
+    getMovementLog() {
+        return this.movementLog.map((entry) => ({ ...entry }));
     }
 }
 
@@ -1929,7 +2029,8 @@ export class Simulation extends Scene {
             tileHeight: 1,
             status,
             displayStatus: status,
-            isActive: this.isCatActive(cat)
+            isActive: this.isCatActive(cat),
+            logEntries: typeof cat.getMovementLog === 'function' ? cat.getMovementLog() : []
         };
     }
 
@@ -1952,7 +2053,8 @@ export class Simulation extends Scene {
             tileHeight: dog.tileHeight,
             status,
             displayStatus: status,
-            isActive: this.isDogActive(dog)
+            isActive: this.isDogActive(dog),
+            logEntries: typeof dog.getMovementLog === 'function' ? dog.getMovementLog() : []
         };
     }
 
