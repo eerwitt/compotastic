@@ -1,5 +1,186 @@
-import { Scene } from 'phaser';
-import { getWebSocketUrl } from '../config';
+import Phaser, { Scene } from 'phaser';
+
+const CELL_SIZE = 16;
+const GRID_WIDTH = 40;
+const GRID_HEIGHT = 30;
+
+const UP = 0;
+const DOWN = 1;
+const LEFT = 2;
+const RIGHT = 3;
+
+class Food extends Phaser.GameObjects.Image
+{
+    constructor (scene, x, y)
+    {
+        super(scene, x * CELL_SIZE, y * CELL_SIZE, 'food');
+
+        this.setOrigin(0);
+
+        this.total = 0;
+
+        scene.add.existing(this);
+    }
+
+    eat ()
+    {
+        this.total++;
+    }
+}
+
+class Snake
+{
+    constructor (scene, x, y)
+    {
+        this.scene = scene;
+        this.headPosition = new Phaser.Geom.Point(x, y);
+
+        this.body = scene.add.group();
+
+        this.head = this.body.create(x * CELL_SIZE, y * CELL_SIZE, 'body');
+        this.head.setOrigin(0);
+
+        this.alive = true;
+
+        this.speed = 100;
+
+        this.moveTime = 0;
+
+        this.tail = new Phaser.Geom.Point(x, y);
+
+        this.heading = RIGHT;
+        this.direction = RIGHT;
+    }
+
+    update (time)
+    {
+        if (time >= this.moveTime)
+        {
+            return this.move(time);
+        }
+
+        return true;
+    }
+
+    faceLeft ()
+    {
+        if (this.direction === UP || this.direction === DOWN)
+        {
+            this.heading = LEFT;
+        }
+    }
+
+    faceRight ()
+    {
+        if (this.direction === UP || this.direction === DOWN)
+        {
+            this.heading = RIGHT;
+        }
+    }
+
+    faceUp ()
+    {
+        if (this.direction === LEFT || this.direction === RIGHT)
+        {
+            this.heading = UP;
+        }
+    }
+
+    faceDown ()
+    {
+        if (this.direction === LEFT || this.direction === RIGHT)
+        {
+            this.heading = DOWN;
+        }
+    }
+
+    move (time)
+    {
+        switch (this.heading)
+        {
+            case LEFT:
+                this.headPosition.x = Phaser.Math.Wrap(this.headPosition.x - 1, 0, GRID_WIDTH);
+                break;
+
+            case RIGHT:
+                this.headPosition.x = Phaser.Math.Wrap(this.headPosition.x + 1, 0, GRID_WIDTH);
+                break;
+
+            case UP:
+                this.headPosition.y = Phaser.Math.Wrap(this.headPosition.y - 1, 0, GRID_HEIGHT);
+                break;
+
+            case DOWN:
+                this.headPosition.y = Phaser.Math.Wrap(this.headPosition.y + 1, 0, GRID_HEIGHT);
+                break;
+
+            default:
+                break;
+        }
+
+        this.direction = this.heading;
+
+        Phaser.Actions.ShiftPosition(
+            this.body.getChildren(),
+            this.headPosition.x * CELL_SIZE,
+            this.headPosition.y * CELL_SIZE,
+            1,
+            this.tail
+        );
+
+        const hitBody = Phaser.Actions.GetFirst(this.body.getChildren(), { x: this.head.x, y: this.head.y }, 1);
+
+        if (hitBody)
+        {
+            this.alive = false;
+
+            return false;
+        }
+
+        this.moveTime = time + this.speed;
+
+        return true;
+    }
+
+    grow ()
+    {
+        const newPart = this.body.create(this.tail.x, this.tail.y, 'body');
+
+        newPart.setOrigin(0);
+    }
+
+    collideWithFood (food)
+    {
+        if (this.head.x === food.x && this.head.y === food.y)
+        {
+            this.grow();
+
+            food.eat();
+
+            if (this.speed > 20 && food.total % 5 === 0)
+            {
+                this.speed -= 5;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    updateGrid (grid)
+    {
+        this.body.children.each((segment) =>
+        {
+            const bx = segment.x / CELL_SIZE;
+            const by = segment.y / CELL_SIZE;
+
+            grid[by][bx] = false;
+        });
+
+        return grid;
+    }
+}
 
 export class ClickerGame extends Scene
 {
@@ -7,169 +188,127 @@ export class ClickerGame extends Scene
     {
         super('ClickerGame');
 
-        this.initialCoinCount = 32;
+        this.gameOverHandled = false;
+    }
+
+    preload ()
+    {
+        this.load.setBaseURL('https://cdn.phaserfiles.com/v385');
+        this.load.image('food', 'assets/games/snake/food.png');
+        this.load.image('body', 'assets/games/snake/body.png');
     }
 
     create ()
     {
-        this.score = 0;
+        this.cameras.main.setBackgroundColor('#bfcc00');
 
-        this.coins = [];
+        this.food = new Food(this, 3, 4);
 
-        this.socket = null;
-        this.timer = null;
+        this.snake = new Snake(this, 8, 8);
 
-        const textStyle = { fontFamily: 'Arial Black', fontSize: 38, color: '#ffffff', stroke: '#000000', strokeThickness: 8 };
+        this.cursors = this.input.keyboard.createCursorKeys();
 
-        this.add.image(512, 384, 'background');
-
-        this.scoreText = this.add.text(32, 32, 'Coins: 0', textStyle).setDepth(1);
-        this.timeText = this.add.text(1024 - 32, 32, 'Time: 10', textStyle).setOrigin(1, 0).setDepth(1);
-
-        this.physics.world.setBounds(0, -400, 1024, 768 + 310);
-
-        this.input.on('gameobjectdown', (pointer, gameObject) => this.clickCoin(gameObject));
-
-        this.events.once('shutdown', () => this.closeSocket());
-        this.events.once('destroy', () => this.closeSocket());
-
-        this.connectToApi();
+        this.gameOverHandled = false;
     }
 
-    connectToApi ()
+    update (time)
     {
-        const url = getWebSocketUrl();
-
-        let socket;
-
-        try
+        if (!this.snake.alive)
         {
-            socket = new WebSocket(url);
-        }
-        catch (error)
-        {
-            console.error('Failed to initialise the WebSocket connection.', error);
+            if (!this.gameOverHandled)
+            {
+                this.handleGameOver();
+            }
+
             return;
         }
 
-        this.socket = socket;
-
-        socket.addEventListener('open', () =>
+        if (this.cursors.left.isDown)
         {
-            console.info(`Connected to WebSocket at ${url}`);
-            this.startGame();
-        });
-
-        socket.addEventListener('close', (event) =>
-        {
-            console.info('WebSocket connection closed.', event);
-        });
-
-        socket.addEventListener('error', (event) =>
-        {
-            console.error('WebSocket error encountered.', event);
-        });
-    }
-
-    startGame ()
-    {
-        this.startTimer();
-
-        for (let i = 0; i < this.initialCoinCount; i++)
-        {
-            this.dropCoin();
+            this.snake.faceLeft();
         }
-    }
-
-    startTimer ()
-    {
-        if (this.timer)
+        else if (this.cursors.right.isDown)
         {
-            this.timer.remove();
+            this.snake.faceRight();
+        }
+        else if (this.cursors.up.isDown)
+        {
+            this.snake.faceUp();
+        }
+        else if (this.cursors.down.isDown)
+        {
+            this.snake.faceDown();
         }
 
-        this.timer = this.time.addEvent({ delay: 10000, callback: () => this.gameOver() });
-    }
-
-    closeSocket ()
-    {
-        if (this.socket)
+        if (this.snake.update(time) && this.snake.collideWithFood(this.food))
         {
-            this.socket.close();
-            this.socket = null;
-        }
-    }
-
-    dropCoin ()
-    {
-        const x = Phaser.Math.Between(128, 896);
-        const y = Phaser.Math.Between(0, -400);
-
-        const coin = this.physics.add.sprite(x, y, 'coin').play('rotate');
-
-        coin.setVelocityX(Phaser.Math.Between(-400, 400));
-        coin.setCollideWorldBounds(true);
-        coin.setBounce(0.9);
-        coin.setInteractive();
-
-        this.coins.push(coin);
-    }
-
-    clickCoin (coin)
-    {
-        //  Disable the coin from being clicked
-        coin.disableInteractive();
-
-        //  Stop it from moving
-        coin.setVelocity(0, 0);
-
-        //  Play the 'vanish' animation
-        coin.play('vanish');
-
-        coin.once('animationcomplete-vanish', () => coin.destroy());
-
-        //  Add 1 to the score
-        this.score++;
-
-        //  Update the score text
-        this.scoreText.setText('Coins: ' + this.score);
-
-        //  Drop a new coin
-        this.dropCoin();
-    }
-
-    update ()
-    {
-        if (this.timer)
-        {
-            this.timeText.setText('Time: ' + Math.ceil(this.timer.getRemainingSeconds()));
-        }
-    }
-
-    gameOver ()
-    {
-        this.coins.forEach((coin) => {
-
-            if (coin.active)
+            if (!this.repositionFood())
             {
-                coin.setVelocity(0, 0);
-
-                coin.play('vanish');
+                this.handleGameOver();
             }
+        }
+    }
 
-        });
+    repositionFood ()
+    {
+        const testGrid = [];
 
-        this.input.off('gameobjectdown');
+        for (let y = 0; y < GRID_HEIGHT; y++)
+        {
+            testGrid[y] = [];
 
-        //  Save our highscore to the registry
+            for (let x = 0; x < GRID_WIDTH; x++)
+            {
+                testGrid[y][x] = true;
+            }
+        }
+
+        this.snake.updateGrid(testGrid);
+
+        const validLocations = [];
+
+        for (let y = 0; y < GRID_HEIGHT; y++)
+        {
+            for (let x = 0; x < GRID_WIDTH; x++)
+            {
+                if (testGrid[y][x])
+                {
+                    validLocations.push({ x, y });
+                }
+            }
+        }
+
+        if (validLocations.length > 0)
+        {
+            const pos = Phaser.Math.RND.pick(validLocations);
+
+            this.food.setPosition(pos.x * CELL_SIZE, pos.y * CELL_SIZE);
+
+            return true;
+        }
+
+        return false;
+    }
+
+    handleGameOver ()
+    {
+        this.gameOverHandled = true;
+
+        const totalFood = this.food.total;
         const highscore = this.registry.get('highscore');
 
-        if (this.score > highscore)
+        if (typeof highscore === 'number')
         {
-            this.registry.set('highscore', this.score);
+            if (totalFood > highscore)
+            {
+                this.registry.set('highscore', totalFood);
+            }
+        }
+        else
+        {
+            this.registry.set('highscore', totalFood);
         }
 
-        //  Swap to the GameOver scene after a 2 second delay
-        this.time.delayedCall(2000, () => this.scene.start('GameOver'));
+        this.time.delayedCall(1000, () => this.scene.start('GameOver'));
     }
 }
