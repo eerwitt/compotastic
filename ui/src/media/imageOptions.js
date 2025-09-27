@@ -1,7 +1,16 @@
-const STATIC_IMAGE_MODULES = import.meta.glob('../assets/**/*.{png,jpg,jpeg,gif,webp,avif}', {
+const STATIC_IMAGE_MODULES = import.meta.glob('../assets/**/*.{jpg,jpeg}', {
     eager: true,
     import: 'default'
 });
+
+function hasJpegExtension(value) {
+    if (typeof value !== 'string') {
+        return false;
+    }
+
+    const lower = value.toLowerCase();
+    return lower.endsWith('.jpg') || lower.endsWith('.jpeg');
+}
 
 function sanitizeOption(entry, fallbackIndex = 0) {
     if (!entry) {
@@ -9,6 +18,10 @@ function sanitizeOption(entry, fallbackIndex = 0) {
     }
 
     if (typeof entry === 'string') {
+        if (!hasJpegExtension(entry.split('?')[0])) {
+            return null;
+        }
+
         return {
             id: `static-${fallbackIndex}`,
             src: entry,
@@ -22,7 +35,7 @@ function sanitizeOption(entry, fallbackIndex = 0) {
         const candidateUrl = typeof entry.url === 'string' ? entry.url : null;
         const src = candidateSrc || candidatePath || candidateUrl;
 
-        if (!src) {
+        if (!src || !hasJpegExtension(src.split('?')[0])) {
             return null;
         }
 

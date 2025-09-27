@@ -7,13 +7,19 @@ import json
 import logging
 import time
 import unittest
+from types import SimpleNamespace
 from typing import Any
-
 from fastapi.testclient import TestClient
 
 from api.app import create_app
 from api.router import get_task_manager
-from api.tasks import BackgroundTaskManager, ImagePayload
+from api.tasks import (
+    BackgroundTaskManager,
+    ImagePayload,
+    OpenAIImageProcessingService,
+)
+
+JPEG_BYTES = b"\xff\xd8test-jpeg-data\xff\xd9"
 
 
 class _StubImageService:
@@ -37,6 +43,76 @@ class _FailingImageService:
         raise RuntimeError("boom")
 
 
+class _StubOpenAIClient:
+    def __init__(self) -> None:
+        self.upload_requests: list[tuple[str, bytes, str]] = []
+        self.files = self._Files(self.upload_requests)
+        self.responses = self._Responses()
+
+    class _Files:
+        def __init__(self, upload_requests: list[tuple[str, bytes, str]]) -> None:
+            self._upload_requests = upload_requests
+
+        async def create(self, *, file: tuple[str, Any, str], purpose: str) -> SimpleNamespace:  # noqa: ANN401
+            filename, stream, content_type = file
+            self._upload_requests.append((filename, stream.getvalue(), content_type))
+            return SimpleNamespace(id="file_123", purpose=purpose)
+
+    class _Responses:
+        async def create(self, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401
+            return SimpleNamespace(model_dump=lambda: {"kwargs": kwargs})
+
+
+class ImagePayloadTests(unittest.TestCase):
+    def test_accepts_valid_jpeg_payload(self) -> None:
+        payload = ImagePayload(
+            data=JPEG_BYTES,
+            filename="photo.jpg",
+            content_type="image/jpeg",
+        )
+
+        self.assertEqual(payload.normalised_content_type(), "image/jpeg")
+
+    def test_allows_jpg_alias(self) -> None:
+        payload = ImagePayload(
+            data=JPEG_BYTES,
+            filename="photo.jpg",
+            content_type="image/jpg",
+        )
+
+        self.assertEqual(payload.normalised_content_type(), "image/jpeg")
+
+    def test_rejects_non_jpeg_extension(self) -> None:
+        payload = ImagePayload(
+            data=JPEG_BYTES,
+            filename="photo.png",
+            content_type="image/jpeg",
+        )
+
+        with self.assertRaises(ValueError):
+            payload.normalised_content_type()
+
+    def test_rejects_non_jpeg_content_type(self) -> None:
+        payload = ImagePayload(
+            data=JPEG_BYTES,
+            filename="photo.jpg",
+            content_type="image/png",
+        )
+
+        with self.assertRaises(ValueError):
+            payload.normalised_content_type()
+
+    def test_rejects_non_jpeg_data(self) -> None:
+        payload = ImagePayload(
+            data=b"not-jpeg",
+            filename="photo.jpg",
+            content_type="image/jpeg",
+        )
+
+        with self.assertRaises(ValueError):
+            payload.normalised_content_type()
+
+
 class BackgroundTaskManagerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.logger = logging.getLogger("test.background")
@@ -44,23 +120,41 @@ class BackgroundTaskManagerTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_and_complete_task(self) -> None:
         service = _StubImageService()
         manager = BackgroundTaskManager(image_service=service, log_callback=self.logger)
-        payload = ImagePayload(data=b"abc", filename="test.png", content_type="image/png")
+        payload = ImagePayload(data=JPEG_BYTES, filename="test.jpg", content_type="image/jpeg")
         task_id = await manager.create_task({"prompt": "hello"}, payload)
 
         status = await manager.wait_for_completion(task_id, timeout=1)
 
         self.assertEqual(status["status"], "completed")
-        self.assertEqual(status["result"]["size"], 3)
+        self.assertEqual(status["result"]["size"], len(JPEG_BYTES))
         self.assertEqual(len(service.calls), 1)
 
     async def test_task_failure_is_reported(self) -> None:
         manager = BackgroundTaskManager(image_service=_FailingImageService(), log_callback=self.logger)
-        payload = ImagePayload(data=b"abc", filename="broken.png")
+        payload = ImagePayload(data=JPEG_BYTES, filename="broken.jpg", content_type="image/jpeg")
         task_id = await manager.create_task({}, payload)
 
         status = await manager.wait_for_completion(task_id, timeout=1)
         self.assertEqual(status["status"], "failed")
         self.assertIn("boom", status["error"])
+
+
+class OpenAIImageProcessingServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_normalised_content_type_used_for_upload(self) -> None:
+        payload = ImagePayload(
+            data=JPEG_BYTES,
+            filename="photo.jpg",
+            content_type="image/jpg",
+        )
+        client = _StubOpenAIClient()
+        service = OpenAIImageProcessingService(client=client, log_callback=logging.getLogger("test.service"))
+
+        result = await service.generate({"prompt": "hi"}, payload)
+
+        self.assertEqual(result["file_id"], "file_123")
+        self.assertEqual(len(client.upload_requests), 1)
+        _, _, content_type = client.upload_requests[0]
+        self.assertEqual(content_type, "image/jpeg")
 
 
 class BackgroundTaskApiTests(unittest.TestCase):
@@ -80,7 +174,7 @@ class BackgroundTaskApiTests(unittest.TestCase):
         response = self.client.post(
             "/tasks",
             data={"metadata": json.dumps(metadata)},
-            files={"file": ("image.png", b"binary", "image/png")},
+            files={"file": ("image.jpg", JPEG_BYTES, "image/jpeg")},
         )
 
         self.assertEqual(response.status_code, 202)
@@ -99,13 +193,13 @@ class BackgroundTaskApiTests(unittest.TestCase):
         self.assertIsNotNone(final_status)
         assert final_status is not None
         self.assertEqual(final_status["status"], "completed")
-        self.assertEqual(final_status["result"]["filename"], "image.png")
+        self.assertEqual(final_status["result"]["filename"], "image.jpg")
 
     def test_invalid_metadata_returns_400(self) -> None:
         response = self.client.post(
             "/tasks",
             data={"metadata": "not-json"},
-            files={"file": ("image.png", b"data", "image/png")},
+            files={"file": ("image.jpg", JPEG_BYTES, "image/jpeg")},
         )
 
         self.assertEqual(response.status_code, 400)
@@ -114,7 +208,16 @@ class BackgroundTaskApiTests(unittest.TestCase):
         response = self.client.post(
             "/tasks",
             data={"metadata": json.dumps({})},
-            files={"file": ("image.png", b"", "image/png")},
+            files={"file": ("image.jpg", b"", "image/jpeg")},
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_non_jpeg_upload_returns_400(self) -> None:
+        response = self.client.post(
+            "/tasks",
+            data={"metadata": json.dumps({})},
+            files={"file": ("image.png", b"not-jpeg", "image/png")},
         )
 
         self.assertEqual(response.status_code, 400)

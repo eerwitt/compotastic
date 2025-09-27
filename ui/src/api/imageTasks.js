@@ -1,5 +1,63 @@
 import { getApiBaseUrl } from '../config';
 
+const JPEG_MIME_TYPES = ['image/jpeg', 'image/jpg'];
+
+function isJpegMimeType(value) {
+    if (typeof value !== 'string') {
+        return false;
+    }
+
+    const lower = value.toLowerCase();
+    return JPEG_MIME_TYPES.includes(lower);
+}
+
+function hasJpegExtension(name) {
+    if (typeof name !== 'string') {
+        return false;
+    }
+
+    const lower = name.toLowerCase();
+    return lower.endsWith('.jpg') || lower.endsWith('.jpeg');
+}
+
+function ensureJpegFilename(name) {
+    const fallback = `image-${Date.now()}.jpg`;
+
+    if (typeof name !== 'string') {
+        return fallback;
+    }
+
+    const trimmed = name.trim();
+
+    if (trimmed.length === 0) {
+        return fallback;
+    }
+
+    const lower = trimmed.toLowerCase();
+
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+        return trimmed;
+    }
+
+    if (!lower.includes('.')) {
+        return `${trimmed}.jpg`;
+    }
+
+    throw new Error('Only .jpg image files are supported.');
+}
+
+function validateJpegBlob(blob, filename) {
+    const candidateType = blob && typeof blob.type === 'string' ? blob.type : '';
+
+    if (candidateType && !isJpegMimeType(candidateType)) {
+        throw new Error('Only JPEG (.jpg) images are supported.');
+    }
+
+    if (!hasJpegExtension(filename)) {
+        throw new Error('Only .jpg image files are supported.');
+    }
+}
+
 function normalizePrompt(prompt) {
     if (typeof prompt !== 'string') {
         return '';
@@ -32,33 +90,50 @@ async function loadImageBlob(imagePath) {
         throw new Error(`Unable to load image asset (${response.status} ${response.statusText}).`);
     }
 
-    return response.blob();
+    const headerType = response.headers && typeof response.headers.get === 'function'
+        ? response.headers.get('content-type')
+        : null;
+
+    if (headerType && !isJpegMimeType(headerType)) {
+        throw new Error('Only JPEG (.jpg) image assets are supported.');
+    }
+
+    const blob = await response.blob();
+
+    if (blob && blob.type && !isJpegMimeType(blob.type)) {
+        throw new Error('Only JPEG (.jpg) image assets are supported.');
+    }
+
+    return blob;
 }
 
 function deriveFilename(imagePath) {
     if (typeof imagePath !== 'string' || imagePath.trim().length === 0) {
-        return `image-${Date.now()}`;
+        return ensureJpegFilename('');
     }
 
     const segments = imagePath.split('/').filter((segment) => segment.trim().length > 0);
 
     if (segments.length === 0) {
-        return `image-${Date.now()}`;
+        return ensureJpegFilename('');
     }
 
     const lastSegment = segments[segments.length - 1];
+    const stripped = typeof lastSegment === 'string'
+        ? lastSegment.split('?')[0].split('#')[0]
+        : '';
 
-    return lastSegment || `image-${Date.now()}`;
+    return ensureJpegFilename(stripped);
 }
 
 function ensureFile(blob, filename) {
-    const safeName = filename && filename.trim().length > 0 ? filename : `image-${Date.now()}`;
-    const mimeType = blob.type && blob.type.length > 0 ? blob.type : 'application/octet-stream';
+    const safeName = ensureJpegFilename(filename);
+    validateJpegBlob(blob, safeName);
 
     try {
-        return new File([blob], safeName, { type: mimeType });
+        return new File([blob], safeName, { type: 'image/jpeg' });
     } catch (error) {
-        return new Blob([blob], { type: mimeType, endings: 'transparent' });
+        return new Blob([blob], { type: 'image/jpeg', endings: 'transparent' });
     }
 }
 
@@ -113,9 +188,14 @@ export async function submitImageClassificationRequest({
     if (hasUpload) {
         fileLike = file;
         const candidateName = typeof file.name === 'string' ? file.name : null;
-        filename = candidateName && candidateName.trim().length > 0
-            ? candidateName.trim()
-            : deriveFilename(trimmedPath);
+        if (file && file.type && !isJpegMimeType(file.type)) {
+            throw new Error('Only JPEG (.jpg) images are supported.');
+        }
+
+        filename = ensureJpegFilename(candidateName || '');
+        if (!hasJpegExtension(filename)) {
+            throw new Error('Only .jpg image files are supported.');
+        }
         metadataPath = '';
     } else {
         const blob = await loadImageBlob(trimmedPath);
@@ -124,9 +204,7 @@ export async function submitImageClassificationRequest({
         metadataPath = trimmedPath;
     }
 
-    const normalizedFilename = filename && filename.trim().length > 0
-        ? filename.trim()
-        : `image-${Date.now()}`;
+    const normalizedFilename = ensureJpegFilename(filename);
     const normalizedLabel = typeof imageLabel === 'string' && imageLabel.trim().length > 0
         ? imageLabel.trim()
         : normalizedFilename;

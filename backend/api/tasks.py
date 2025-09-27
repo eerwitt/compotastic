@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
@@ -34,6 +35,15 @@ class ImagePayload:
     data: bytes
     filename: str
     content_type: str | None = None
+
+    def normalised_content_type(self) -> str:
+        """Validate the payload data and return the JPEG content type."""
+
+        return normalise_image_content_type(
+            filename=self.filename,
+            data=self.data,
+            provided_type=self.content_type,
+        )
 
 
 @dataclass(slots=True)
@@ -87,6 +97,42 @@ class ImageProcessingService(Protocol):
         """Process an image with the provided metadata and return a result."""
 
 
+JPEG_CONTENT_TYPE = "image/jpeg"
+JPEG_CONTENT_TYPE_ALIASES = {"image/jpeg", "image/jpg"}
+JPEG_EXTENSIONS = {".jpg", ".jpeg"}
+
+
+def _looks_like_jpeg(data: bytes) -> bool:
+    """Return ``True`` when ``data`` appears to be a JPEG image."""
+
+    if len(data) < 4:
+        return False
+
+    starts_with_header = data[:2] == b"\xff\xd8"
+    ends_with_footer = data[-2:] == b"\xff\xd9"
+    return starts_with_header and ends_with_footer
+
+
+def normalise_image_content_type(
+    *, filename: str, data: bytes, provided_type: str | None
+) -> str:
+    """Validate the payload and return the JPEG content type."""
+
+    if provided_type:
+        lowered_type = provided_type.lower()
+        if lowered_type not in JPEG_CONTENT_TYPE_ALIASES:
+            raise ValueError("Only JPEG images are supported")
+
+    suffix = Path(filename or "").suffix.lower()
+    if suffix and suffix not in JPEG_EXTENSIONS:
+        raise ValueError("Only .jpg images are supported")
+
+    if not _looks_like_jpeg(data):
+        raise ValueError("Uploaded data is not a valid JPEG image")
+
+    return JPEG_CONTENT_TYPE
+
+
 class ChunkedBytesIO(io.BytesIO):
     """A ``BytesIO`` wrapper that enforces chunked reads."""
 
@@ -132,13 +178,22 @@ class OpenAIImageProcessingService:
             client = AsyncOpenAI()
             self._client = client
 
+        resolved_content_type = payload.normalised_content_type()
+        if payload.content_type and payload.content_type.lower() != resolved_content_type:
+            self._log.debug(
+                "Normalised image content type for %s from %s to %s",
+                payload.filename,
+                payload.content_type,
+                resolved_content_type,
+            )
+
         stream = ChunkedBytesIO(payload.data, chunk_size)
         try:
             upload = await client.files.create(
                 file=(
                     payload.filename,
                     stream,
-                    payload.content_type or "application/octet-stream",
+                    resolved_content_type,
                 ),
                 purpose="vision",
             )
