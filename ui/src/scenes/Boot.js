@@ -1,4 +1,5 @@
 import { Scene } from 'phaser';
+import { ensureWebSocketManager } from '../network/WebSocketManager';
 
 export class Boot extends Scene
 {
@@ -19,6 +20,13 @@ export class Boot extends Scene
     {
         //  A global value to store the highscore in
         this.registry.set('highscore', 0);
+
+        ensureWebSocketManager(this.game);
+
+        if (!this.scene.isActive('ConnectionStatusOverlay'))
+        {
+            this.scene.launch('ConnectionStatusOverlay');
+        }
 
         // this.scene.start('Preloader');
 
