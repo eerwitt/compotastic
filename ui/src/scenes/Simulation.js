@@ -1356,8 +1356,6 @@ export class Simulation extends Scene {
             this.waitingText.destroy();
             this.waitingText = null;
         }
-
-        this.refreshStatusPanel();
     }
 
     positionWaitingText() {
