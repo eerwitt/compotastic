@@ -89,6 +89,21 @@ class GridWorldEnvironmentTests(unittest.TestCase):
         self.assertEqual(reward, -1)
         self.assertFalse(done)
 
+    def test_step_resumes_from_last_tracked_location(self) -> None:
+        env = GridWorldEnvironment(width=5, height=5)
+        node = MeshtasticNode(
+            identifier="node-1",
+            battery_level=80.0,
+            compute_efficiency_flops_per_milliamp=12.0,
+            location=GridLocation(2, 2),
+        )
+
+        _, moved_node, _, _ = env.step(node, int(Action.MOVE_FORWARD))
+        self.assertEqual(moved_node.location, GridLocation(2, 1))
+
+        _, next_node, _, _ = env.step(node, int(Action.MOVE_RIGHT))
+        self.assertEqual(next_node.location, GridLocation(3, 1))
+
 
 class QLearningAgentTests(unittest.TestCase):
     """Confirm the Q-learning agent updates values correctly."""
