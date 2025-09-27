@@ -7,10 +7,12 @@ import { Preloader } from './scenes/Preloader';
 import { ConnectionStatusOverlay } from './scenes/ConnectionStatusOverlay';
 
 //  Find out more information about the Game Config at: https://newdocs.phaser.io/docs/3.70.0/Phaser.Types.Core.GameConfig
+const computeSquareSize = () => Math.min(window.innerHeight, window.innerWidth);
+
 const config = {
     type: Phaser.AUTO,
-    width: 1024,
-    height: 768,
+    width: computeSquareSize(),
+    height: computeSquareSize(),
     parent: 'game-container',
     backgroundColor: '#028af8',
     scale: {
@@ -33,4 +35,14 @@ const config = {
     ]
 };
 
-export default new Game(config);
+const game = new Game(config);
+
+const resizeGame = () => {
+    const size = computeSquareSize();
+
+    game.scale.setGameSize(size, size);
+};
+
+window.addEventListener('resize', resizeGame);
+
+export default game;

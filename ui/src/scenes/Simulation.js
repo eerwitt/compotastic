@@ -3,6 +3,7 @@ import Phaser, { Scene } from 'phaser';
 const DEFAULT_CAT_COUNT = 10;
 const CAT_ASCII = '^.^';
 const CAT_FONT_STYLE = { fontFamily: 'Courier', fontSize: 32, color: '#e27272ff' };
+const CAT_TILE_PADDING_RATIO = 0.2;
 const CAT_SPEED_RANGE = { min: 40, max: 140 };
 const LOOK_INTERVAL_RANGE = { min: 800, max: 2200 };
 const GRID_TILE_COUNT = { width: 250, height: 250 };
@@ -39,6 +40,7 @@ class Cat {
         this.speed = Phaser.Math.Between(CAT_SPEED_RANGE.min, CAT_SPEED_RANGE.max);
         this.text = scene.add.text(0, 0, CAT_ASCII, CAT_FONT_STYLE);
         this.text.setOrigin(0.5, 0.5);
+        this.scaleToTile();
 
         this.tileX = tileX;
         this.tileY = tileY;
@@ -65,6 +67,24 @@ class Cat {
         this.text.setPosition(position.x, position.y);
         this.targetPixelX = position.x;
         this.targetPixelY = position.y;
+    }
+
+    scaleToTile() {
+        const horizontalPadding = GRID_TILE_SIZE * CAT_TILE_PADDING_RATIO;
+        const verticalPadding = GRID_TILE_SIZE * CAT_TILE_PADDING_RATIO;
+        const maxWidth = GRID_TILE_SIZE - horizontalPadding;
+        const maxHeight = GRID_TILE_SIZE - verticalPadding;
+        const textWidth = this.text.width;
+        const textHeight = this.text.height;
+
+        if (textWidth === 0 || textHeight === 0) {
+            this.text.setScale(1);
+            return;
+        }
+
+        const scale = Math.min(maxWidth / textWidth, maxHeight / textHeight);
+
+        this.text.setScale(scale);
     }
 
     lookAround(time) {
