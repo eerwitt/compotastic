@@ -4,10 +4,10 @@ const DEFAULT_CAT_COUNT = 10;
 const DEFAULT_DOG_COUNT = 1;
 
 const DOG_ASCII = '/\\_/\\\n( o.o)\n(  ^ )\n \\___/';
-const DOG_FONT_STYLE = { fontFamily: 'Courier', fontSize: 30, color: '#f5deb3ff', align: 'center' };
+const DOG_FONT_STYLE = { fontFamily: 'Courier', fontSize: 30, color: '#f5deb3ff', align: 'center', fontStyle: 'bold' };
 
 const CAT_FACE = '^.^';
-const CAT_FONT_STYLE = { fontFamily: 'Courier', fontSize: 32, color: '#e27272ff' };
+const CAT_FONT_STYLE = { fontFamily: 'Courier', fontSize: 32, color: '#e27272ff', fontStyle: 'bold' };
 const CAT_MODAL_FONT_STYLE = { fontFamily: 'Courier', fontSize: 20, color: '#f4e1c1ff', align: 'left' };
 
 const CAT_TILE_PADDING_RATIO = 0.2;
@@ -163,7 +163,7 @@ class Cat {
         this.grid = grid;
         this.speed = Phaser.Math.Between(CAT_SPEED_RANGE.min, CAT_SPEED_RANGE.max);
         this.face = CAT_FACE;
-        this.text = scene.add.text(0, 0, createAsciiBox([this.face]), CAT_FONT_STYLE);
+        this.text = scene.add.text(0, 0, this.face, CAT_FONT_STYLE);
         this.text.setOrigin(0.5, 0.5);
         this.text.setDepth(5);
         this.text.setInteractive({ useHandCursor: true });
@@ -596,7 +596,7 @@ export class Simulation extends Scene {
         const catCount = Number.isInteger(configuredCatCount) && configuredCatCount >= 0 ? configuredCatCount : DEFAULT_CAT_COUNT;
         const configuredDogCount = this.registry.get('dogCount');
         const dogCount = Number.isInteger(configuredDogCount) && configuredDogCount >= 0 ? configuredDogCount : DEFAULT_DOG_COUNT;
-      
+
         const attributePool = Phaser.Utils.Array.Shuffle([...CAT_ATTRIBUTE_PRESETS]);
 
         for (let i = 0; i < catCount; i++) {
