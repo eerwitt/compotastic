@@ -27,6 +27,7 @@ class Grid {
         this.pixelHeight = tileCountHeight;
         this.graphics = scene.add.graphics();
         this.graphics.setDepth(-1);
+        this.cells = [];
     }
 
     updateLayout(viewWidth, viewHeight) {
@@ -39,21 +40,50 @@ class Grid {
         this.pixelWidth = this.tileCountWidth * tileSize;
         this.pixelHeight = this.tileCountHeight * tileSize;
 
+        this.generateCells();
         this.draw();
+    }
+
+    generateCells() {
+        const cells = [];
+
+        for (let y = 0; y < this.tileCountHeight; y++) {
+            const row = [];
+
+            for (let x = 0; x < this.tileCountWidth; x++) {
+                const left = x * this.tileSize;
+                const top = y * this.tileSize;
+
+                row.push({
+                    left,
+                    top,
+                    right: left + this.tileSize,
+                    bottom: top + this.tileSize
+                });
+            }
+
+            cells.push(row);
+        }
+
+        this.cells = cells;
     }
 
     draw() {
         this.graphics.clear();
         this.graphics.lineStyle(1, GRID_LINE_COLOR, GRID_LINE_ALPHA);
 
-        for (let x = 0; x <= this.tileCountWidth; x++) {
-            const positionX = x * this.tileSize;
-            this.graphics.lineBetween(positionX, 0, positionX, this.pixelHeight);
+        if (this.cells.length === 0) {
+            return;
         }
 
-        for (let y = 0; y <= this.tileCountHeight; y++) {
-            const positionY = y * this.tileSize;
-            this.graphics.lineBetween(0, positionY, this.pixelWidth, positionY);
+        for (let y = 0; y < this.cells.length; y++) {
+            const row = this.cells[y];
+
+            for (let x = 0; x < row.length; x++) {
+                const cell = row[x];
+
+                this.graphics.strokeRect(cell.left, cell.top, this.tileSize, this.tileSize);
+            }
         }
     }
 
