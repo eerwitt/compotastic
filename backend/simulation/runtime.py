@@ -106,6 +106,8 @@ class MeshSimulation:
         self._cat_idle_chance = 0.25
         self._dog_idle_chance = 0.45
         self._dog_move_interval = 3
+        self._job_hold_ticks = 3
+        self._node_jobs: Dict[str, int] = {}
 
         occupied: CoordinateSet = set()
         self._cats = self._spawn_agents(
@@ -275,6 +277,19 @@ class MeshSimulation:
         idle_probability = float(idle_probability)
         idle_probability = min(max(idle_probability, 0.0), 1.0)
 
+        remaining_job_ticks = self._node_jobs.get(node.identifier, 0)
+        if remaining_job_ticks > 0:
+            stationary_node = self._drain_battery(node)
+            self._sync_environment_state(stationary_node)
+            if remaining_job_ticks <= 1:
+                self._node_jobs.pop(node.identifier, None)
+                self._log(
+                    f"Node {node.identifier} wrapped up job at {stationary_node.location} and resumed exploration"
+                )
+            else:
+                self._node_jobs[node.identifier] = remaining_job_ticks - 1
+            return stationary_node
+
         if self._rng.random() < idle_probability:
             stationary_node = self._drain_battery(node)
             self._sync_environment_state(stationary_node)
@@ -309,7 +324,11 @@ class MeshSimulation:
             drained_candidate = self._drain_battery(candidate)
             self._sync_environment_state(drained_candidate)
             if resolved_action is Action.DO_WORK and reward != 0:
-                self._consume_reward(candidate.location, reward, node.identifier)
+                if self._consume_reward(candidate.location, reward, node.identifier):
+                    self._node_jobs[node.identifier] = self._job_hold_ticks
+                    self._log(
+                        f"Node {node.identifier} will remain on site for {self._job_hold_ticks} more ticks"
+                    )
             return drained_candidate
 
         stationary_node = self._drain_battery(node)
@@ -324,7 +343,7 @@ class MeshSimulation:
         location: GridLocation,
         reward_value: int,
         node_identifier: str,
-    ) -> None:
+    ) -> bool:
         self._environment.set_reward(location, 0)
         remaining: List[RewardTile] = []
         removed = False
@@ -338,6 +357,7 @@ class MeshSimulation:
                 f"Node {node_identifier} completed job at {location} and collected reward {reward_value}"
             )
         self._reward_tiles = remaining
+        return removed
 
     def _drain_battery(self, node: MeshtasticNode) -> MeshtasticNode:
         drain_amount = self._rng.uniform(0.05, 0.35)

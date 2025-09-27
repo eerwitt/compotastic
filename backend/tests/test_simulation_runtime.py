@@ -180,3 +180,57 @@ def test_do_work_consumes_reward_and_updates_state() -> None:
     assert simulation.environment.reward_at(location) == 0
     assert not any(tile.location == location for tile in simulation.snapshot().rewards)
     assert any("completed job" in str(call.args[0]) for call in log_spy.call_args_list)
+    assert any("remain on site" in str(call.args[0]) for call in log_spy.call_args_list)
+
+
+def test_nodes_hold_position_after_collecting_reward() -> None:
+    simulation = MeshSimulation(
+        width=5,
+        height=5,
+        cat_count=1,
+        dog_count=0,
+        random_seed=11,
+        reward_tiles=[(2, 2, 6)],
+    )
+
+    cat = simulation.snapshot().cats[0].with_location(GridLocation(2, 2))
+    simulation._cats = [cat]
+    simulation.environment._node_states[cat.identifier] = cat
+
+    class DoWorkThenMoveRandom:
+        def __init__(self) -> None:
+            self._shuffle_calls = 0
+
+        def random(self) -> float:
+            return 0.9
+
+        def shuffle(self, sequence) -> None:
+            self._shuffle_calls += 1
+            do_work_value = Action.DO_WORK.value
+            move_right_value = Action.MOVE_RIGHT.value
+            if self._shuffle_calls == 1 and do_work_value in sequence:
+                sequence.sort(key=lambda value: 0 if value == do_work_value else 1)
+            elif move_right_value in sequence:
+                sequence.sort(key=lambda value: 0 if value == move_right_value else 1)
+
+        def uniform(self, start: float, end: float) -> float:
+            return start
+
+        def randrange(self, upper: int) -> int:
+            return 0
+
+    simulation._rng = DoWorkThenMoveRandom()
+
+    job_location = GridLocation(2, 2)
+
+    simulation.step()
+
+    for _ in range(simulation._job_hold_ticks):
+        simulation.step()
+        current_location = simulation.snapshot().cats[0].location
+        assert current_location == job_location
+
+    simulation.step()
+    resumed_location = simulation.snapshot().cats[0].location
+
+    assert resumed_location != job_location
