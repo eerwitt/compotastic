@@ -6,7 +6,7 @@ const CAT_FONT_STYLE = { fontFamily: 'Courier', fontSize: 32, color: '#e27272ff'
 const CAT_TILE_PADDING_RATIO = 0.2;
 const CAT_SPEED_RANGE = { min: 40, max: 140 };
 const LOOK_INTERVAL_RANGE = { min: 800, max: 2200 };
-const GRID_TILE_COUNT = { width: 250, height: 250 };
+const GRID_TILE_COUNT = { width: 25, height: 25 };
 const GRID_LINE_COLOR = 0x615a3b;
 const GRID_LINE_ALPHA = 0.2;
 
