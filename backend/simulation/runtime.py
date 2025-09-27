@@ -21,7 +21,7 @@ CoordinateSet = Set[Tuple[int, int]]
 
 
 @dataclass_json
-@dataclass(frozen=True)
+@dataclass
 class SimulationGrid:
     """Dataclass describing the grid used for rendering the map."""
 
@@ -30,7 +30,7 @@ class SimulationGrid:
 
 
 @dataclass_json
-@dataclass(frozen=True)
+@dataclass
 class RewardTile:
     """Serializable description of a reward positioned on the grid."""
 
@@ -39,7 +39,7 @@ class RewardTile:
 
 
 @dataclass_json
-@dataclass(frozen=True)
+@dataclass
 class SimulationSnapshot:
     """Serializable view of the current simulation state."""
 

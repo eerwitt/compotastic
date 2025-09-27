@@ -70,6 +70,31 @@ def test_dog_without_model_eventually_moves() -> None:
     assert moved, "Dog should explore the grid even without a trained model"
 
 
+def test_snapshot_nodes_allow_location_updates() -> None:
+    simulation = MeshSimulation(width=5, height=5, cat_count=1, dog_count=0, random_seed=19)
+
+    snapshot = simulation.snapshot()
+    cat = snapshot.cats[0]
+
+    target_location = GridLocation(2, 2)
+    if target_location == cat.location:
+        target_location = GridLocation(3, 2)
+
+    cat.location = target_location
+
+    with patch.object(simulation._environment, "step", wraps=simulation._environment.step) as step_spy:
+        simulation.step()
+
+    cat_calls = [
+        call_args
+        for call_args in step_spy.call_args_list
+        if call_args.args[0].identifier == cat.identifier
+    ]
+    assert cat_calls, "Expected environment step to process the updated node"
+    moved_node = cat_calls[0].args[0]
+    assert moved_node.location == target_location
+
+
 def test_add_reward_tile_updates_environment() -> None:
     simulation = MeshSimulation(width=5, height=5, cat_count=0, dog_count=0, random_seed=3)
 
