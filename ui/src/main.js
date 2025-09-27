@@ -37,6 +37,10 @@ const config = {
 
 const game = new Game(config);
 
+if (typeof window !== 'undefined') {
+    window.__game = game;
+}
+
 const resizeGame = () => {
     const size = computeSquareSize();
 

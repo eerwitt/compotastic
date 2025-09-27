@@ -9,6 +9,7 @@ const DOG_FONT_STYLE = { fontFamily: 'Courier', fontSize: 30, color: '#f5deb3ff'
 const CAT_FACE = '^.^';
 const CAT_FONT_STYLE = { fontFamily: 'Courier', fontSize: 32, color: '#e27272ff', fontStyle: 'bold' };
 const CAT_MODAL_FONT_STYLE = { fontFamily: 'Courier', fontSize: 20, color: '#f4e1c1ff', align: 'left' };
+const DOG_MODAL_FONT_STYLE = { fontFamily: 'Courier', fontSize: 20, color: '#f7f7dcff', align: 'left' };
 
 const CAT_TILE_PADDING_RATIO = 0.2;
 const DOG_TILE_PADDING_RATIO = 0.15;
@@ -351,6 +352,13 @@ class Dog {
         this.speed = Phaser.Math.Between(DOG_SPEED_RANGE.min, DOG_SPEED_RANGE.max);
         this.text = scene.add.text(0, 0, DOG_ASCII, DOG_FONT_STYLE);
         this.text.setOrigin(0.5, 0.5);
+        this.text.setDepth(5);
+        this.text.setInteractive({ useHandCursor: true });
+
+        this.modal = scene.add.text(0, 0, '', DOG_MODAL_FONT_STYLE);
+        this.modal.setOrigin(0.5, 1);
+        this.modal.setDepth(20);
+        this.modal.setVisible(false);
 
         this.tileX = tileX;
         this.tileY = tileY;
@@ -365,6 +373,9 @@ class Dog {
         this.targetPixelX = 0;
         this.targetPixelY = 0;
         this.nextMoveCheckTime = scene.time.now || 0;
+
+        this.text.on('pointerover', this.showAttributesModal, this);
+        this.text.on('pointerout', this.hideAttributesModal, this);
 
         this.onGridLayoutChanged();
     }
@@ -390,6 +401,10 @@ class Dog {
         this.text.setPosition(position.x, position.y);
         this.targetPixelX = position.x;
         this.targetPixelY = position.y;
+
+        if (this.modal.visible) {
+            this.updateModalPosition();
+        }
     }
 
     scaleToTiles() {
@@ -437,6 +452,32 @@ class Dog {
         this.moveDuration = distance > 0 ? (distance / this.speed) * 1000 : 0;
         this.moveStartTime = time;
         this.isMoving = true;
+    }
+
+    buildModalContent() {
+        const lines = [
+            `SPD: ${Math.round(this.speed)}`,
+        ];
+
+        lines.push(`SIZE: ${this.tileWidth}x${this.tileHeight}`);
+        lines.push(`LOC: (${this.tileX}, ${this.tileY})`);
+
+        return createAsciiBox(lines);
+    }
+
+    updateModalPosition() {
+        const offset = (this.text.displayHeight / 2) + (this.grid.tileSize * 0.4);
+        this.modal.setPosition(this.text.x, this.text.y - offset);
+    }
+
+    showAttributesModal() {
+        this.modal.setText(this.buildModalContent());
+        this.updateModalPosition();
+        this.modal.setVisible(true);
+    }
+
+    hideAttributesModal() {
+        this.modal.setVisible(false);
     }
 
     findClosestCat(cats) {
@@ -511,6 +552,11 @@ class Dog {
 
             this.text.setPosition(currentX, currentY);
 
+            if (this.modal.visible) {
+                this.modal.setText(this.buildModalContent());
+                this.updateModalPosition();
+            }
+
             if (progress >= 1) {
                 this.isMoving = false;
                 this.setPosition(this.targetTileX, this.targetTileY);
@@ -518,6 +564,11 @@ class Dog {
             }
 
             return;
+        }
+
+        if (this.modal.visible) {
+            this.modal.setText(this.buildModalContent());
+            this.updateModalPosition();
         }
 
         if (time < this.nextMoveCheckTime) {
@@ -549,10 +600,16 @@ class Dog {
         this.setPosition(this.tileX, this.tileY);
         this.isMoving = false;
         this.scheduleNextMoveCheck(this.scene.time.now || 0);
+
+        if (this.modal.visible) {
+            this.modal.setText(this.buildModalContent());
+            this.updateModalPosition();
+        }
     }
 
     destroy() {
         this.text.destroy();
+        this.modal.destroy();
     }
 }
 
