@@ -878,11 +878,52 @@ export class Simulation extends Scene {
 
         const tileX = this.extractTileCoordinate(entry, 'x');
         const tileY = this.extractTileCoordinate(entry, 'y');
-        const attributes = (entry.attributes && typeof entry.attributes === 'object')
+        let attributes = (entry.attributes && typeof entry.attributes === 'object')
             ? { ...entry.attributes }
             : null;
 
+        if (!attributes) {
+            attributes = this.deriveAttributesFromNode(entry);
+        }
+
         return { tileX, tileY, attributes };
+    }
+
+    deriveAttributesFromNode(entry) {
+        if (!entry || typeof entry !== 'object') {
+            return null;
+        }
+
+        const efficiency = entry.compute_efficiency_flops_per_milliamp;
+        const battery = entry.battery_level;
+        const identifier = typeof entry.identifier === 'string'
+            ? entry.identifier
+            : null;
+
+        let cpuText = null;
+
+        if (typeof efficiency === 'number' && Number.isFinite(efficiency)) {
+            const formatted = Math.round(efficiency).toLocaleString();
+            cpuText = `${formatted} FLOPs/mA`;
+        } else if (identifier) {
+            cpuText = `Node ${identifier}`;
+        }
+
+        let ramText = null;
+
+        if (typeof battery === 'number' && Number.isFinite(battery)) {
+            const clamped = Math.max(0, Math.min(100, Math.round(battery)));
+            ramText = `${clamped}% battery`;
+        }
+
+        if (!cpuText && !ramText) {
+            return null;
+        }
+
+        return {
+            cpu: cpuText || 'Unknown CPU',
+            ram: ramText || 'Battery unavailable'
+        };
     }
 
     normalizeDogEntry(entry) {
@@ -910,6 +951,10 @@ export class Simulation extends Scene {
 
         if (entry.position && Number.isInteger(entry.position[axisKey])) {
             return entry.position[axisKey];
+        }
+
+        if (entry.location && Number.isInteger(entry.location[axisKey])) {
+            return entry.location[axisKey];
         }
 
         return null;

@@ -16,6 +16,7 @@ class WebSocketManager
         this.handleOpen = this.handleOpen.bind(this);
         this.handleClose = this.handleClose.bind(this);
         this.handleError = this.handleError.bind(this);
+        this.handleMessage = this.handleMessage.bind(this);
         this.tryConnect = this.tryConnect.bind(this);
 
         if (!this.registry.has('wsConnected'))
@@ -50,6 +51,7 @@ class WebSocketManager
         socket.addEventListener('open', this.handleOpen);
         socket.addEventListener('close', this.handleClose);
         socket.addEventListener('error', this.handleError);
+        socket.addEventListener('message', this.handleMessage);
     }
 
     handleOpen ()
@@ -96,7 +98,43 @@ class WebSocketManager
         this.socket.removeEventListener('open', this.handleOpen);
         this.socket.removeEventListener('close', this.handleClose);
         this.socket.removeEventListener('error', this.handleError);
+        this.socket.removeEventListener('message', this.handleMessage);
         this.socket = null;
+    }
+
+    handleMessage (event)
+    {
+        if (this.isDestroyed)
+        {
+            return;
+        }
+
+        const rawPayload = event?.data;
+
+        if (typeof rawPayload !== 'string')
+        {
+            return;
+        }
+
+        let parsed;
+
+        try
+        {
+            parsed = JSON.parse(rawPayload);
+        }
+        catch (error)
+        {
+            console.warn('Failed to parse simulation payload', error);
+
+            return;
+        }
+
+        if (!parsed || typeof parsed !== 'object')
+        {
+            return;
+        }
+
+        this.events.emit('simulation-data', parsed);
     }
 
     scheduleRetry ()
@@ -134,6 +172,7 @@ class WebSocketManager
             this.socket.removeEventListener('open', this.handleOpen);
             this.socket.removeEventListener('close', this.handleClose);
             this.socket.removeEventListener('error', this.handleError);
+            this.socket.removeEventListener('message', this.handleMessage);
             this.socket.close();
             this.socket = null;
         }
