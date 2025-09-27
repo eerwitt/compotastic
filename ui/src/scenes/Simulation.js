@@ -24,14 +24,14 @@ const DOG_MOVE_INTERVAL_RANGE = { min: 2500, max: 6000 };
 const DOG_MOVE_PROBABILITY = 0.35;
 
 const CAT_BLINK_INTERVAL_RANGE = { min: 2800, max: 5200 };
-const CAT_BLINK_DURATION = 150;
+const CAT_BLINK_DURATION = 250;
 const CAT_MOUTH_INTERVAL_RANGE = { min: 3400, max: 6800 };
-const CAT_MOUTH_OPEN_DURATION = 220;
+const CAT_MOUTH_OPEN_DURATION = 820;
 
 const DOG_BLINK_INTERVAL_RANGE = { min: 3200, max: 6100 };
-const DOG_BLINK_DURATION = 180;
+const DOG_BLINK_DURATION = 270;
 const DOG_TONGUE_INTERVAL_RANGE = { min: 2600, max: 4800 };
-const DOG_TONGUE_OUT_DURATION = 260;
+const DOG_TONGUE_OUT_DURATION = 2600;
 const DOG_EYES_OPEN = 'o.o';
 const DOG_EYES_BLINK = '-.-';
 const DOG_MOUTH_IDLE = '^';
@@ -40,7 +40,7 @@ const CAT_BLINK_FACE = '-.-';
 const CAT_MOUTH_FACE = '^o^';
 
 function buildDogAscii(eyes, mouth) {
-    return `/\\_/\\\n( ${eyes})\n(  ${mouth} )\n \\___/`;
+    return `/\\_/\\\n( ${eyes})\n(  ${mouth} )\n----`;
 }
 
 const CAT_ATTRIBUTE_PRESETS = [
