@@ -25,6 +25,26 @@ const NODE_STYLE = {
     fontSize: 13,
     color: '#dcd4a0'
 };
+const LOG_TITLE_STYLE = {
+    fontFamily: 'Courier',
+    fontSize: 15,
+    color: '#f7f7dc'
+};
+const LOG_CONTENT_STYLE = {
+    fontFamily: 'Courier',
+    fontSize: 13,
+    color: '#c9c3a0',
+    lineSpacing: 4,
+    wordWrap: {
+        width: MIN_PANEL_WIDTH - (PANEL_PADDING * 2),
+        useAdvancedWrap: false
+    }
+};
+const HINT_STYLE = {
+    fontFamily: 'Courier',
+    fontSize: 12,
+    color: '#b8b089'
+};
 const NODE_HOVER_COLOR = '#fff6b0';
 const DEMO_ACTIVITY_LEVELS = ['~82% simulated load', '~71% simulated load', '~64% simulated load'];
 const DEMO_STATUS_MESSAGES = [
@@ -64,17 +84,37 @@ export class SimulationStatusPanel {
         this.sortedEntries = [];
         this.panelWidth = MIN_PANEL_WIDTH;
         this.panelHeight = 0;
+        this.selectedNodeId = null;
+        this.selectedNodeName = '';
+        this.selectedLogLines = [];
 
         this.background = scene.add.graphics();
         this.titleText = scene.add.text(0, 0, 'Simulation Status', TITLE_STYLE).setOrigin(0, 0);
         this.summaryText = scene.add.text(0, 0, '', SUMMARY_STYLE).setOrigin(0, 0);
         this.toggleText = scene.add.text(0, 0, '', TOGGLE_STYLE).setOrigin(0, 0);
+        this.logHintText = scene.add.text(0, 0, 'Click a node to toggle activity log', HINT_STYLE)
+            .setOrigin(0, 0)
+            .setVisible(false);
+        this.logTitleText = scene.add.text(0, 0, '', LOG_TITLE_STYLE)
+            .setOrigin(0, 0)
+            .setVisible(false);
+        this.logContentText = scene.add.text(0, 0, '', LOG_CONTENT_STYLE)
+            .setOrigin(0, 0)
+            .setVisible(false);
+        this.logContentText.setLineSpacing(4);
 
         this.toggleText.setInteractive({ useHandCursor: true });
         this.toggleText.on('pointerup', () => {
             this.isExpanded = !this.isExpanded;
             this.updateToggleText();
             this.updateLayout();
+            if (!this.isExpanded) {
+                this.clearSelectedNodeLog();
+                this.updateNodeEntryColors();
+                if (this.onNodeHoverEnd) {
+                    this.onNodeHoverEnd();
+                }
+            }
         });
 
         this.toggleText.on('pointerover', () => {
@@ -91,6 +131,8 @@ export class SimulationStatusPanel {
             this.summaryText,
             this.toggleText
         ]);
+
+        this.container.add([this.logHintText, this.logTitleText, this.logContentText]);
 
         this.container.setDepth(2500);
         this.container.setScrollFactor(0);
@@ -124,6 +166,9 @@ export class SimulationStatusPanel {
         this.titleText.destroy();
         this.summaryText.destroy();
         this.toggleText.destroy();
+        this.logHintText.destroy();
+        this.logTitleText.destroy();
+        this.logContentText.destroy();
         this.container.destroy();
     }
 
@@ -137,6 +182,7 @@ export class SimulationStatusPanel {
 
         this.updateSummary(safeData);
         this.updateNodes(Array.isArray(safeData.nodes) ? safeData.nodes : []);
+        this.refreshSelectedNodeLog();
         this.updateToggleText(safeData.nodes?.length || 0);
         this.updateLayout();
     }
@@ -240,17 +286,22 @@ export class SimulationStatusPanel {
             entry.data = node;
             entry.order = index;
             entry.text.setText(this.formatNodeLine(node, index));
+            this.applyNodeEntryColor(entry);
             seen.add(nodeId);
         });
 
         Array.from(this.nodeEntries.entries()).forEach(([nodeId, entry]) => {
             if (!seen.has(nodeId)) {
+                if (this.selectedNodeId === nodeId) {
+                    this.clearSelectedNodeLog();
+                }
                 entry.text.destroy();
                 this.nodeEntries.delete(nodeId);
             }
         });
 
         this.sortedEntries = Array.from(this.nodeEntries.values()).sort((a, b) => a.order - b.order);
+        this.updateNodeEntryColors();
     }
 
     createNodeEntry(nodeId) {
@@ -263,6 +314,7 @@ export class SimulationStatusPanel {
                 return;
             }
 
+            entry.isHovered = true;
             text.setColor(NODE_HOVER_COLOR);
 
             if (this.onNodeHover) {
@@ -277,11 +329,17 @@ export class SimulationStatusPanel {
                 return;
             }
 
-            text.setColor(NODE_STYLE.color);
+            entry.isHovered = false;
+            const isSelected = this.selectedNodeId === nodeId;
+            text.setColor(isSelected ? NODE_HOVER_COLOR : NODE_STYLE.color);
 
-            if (this.onNodeHoverEnd) {
+            if (!isSelected && this.onNodeHoverEnd) {
                 this.onNodeHoverEnd(entry.data);
             }
+        });
+
+        text.on('pointerup', () => {
+            this.handleNodeLogToggle(nodeId);
         });
 
         this.container.add(text);
@@ -290,8 +348,120 @@ export class SimulationStatusPanel {
             id: nodeId,
             text,
             data: null,
-            order: 0
+            order: 0,
+            isHovered: false
         };
+    }
+
+    handleNodeLogToggle(nodeId) {
+        if (!nodeId) {
+            return;
+        }
+
+        if (!this.isExpanded) {
+            this.isExpanded = true;
+            this.updateToggleText();
+        }
+
+        const wasSelected = this.selectedNodeId === nodeId;
+        const entry = this.nodeEntries.get(nodeId);
+        const entryData = entry?.data;
+
+        if (wasSelected) {
+            this.clearSelectedNodeLog();
+
+            if (this.onNodeHoverEnd && entryData) {
+                this.onNodeHoverEnd(entryData);
+            }
+        } else {
+            this.selectedNodeId = nodeId;
+            this.refreshSelectedNodeLog();
+
+            if (this.onNodeHover && entryData) {
+                this.onNodeHover(entryData);
+            }
+        }
+
+        this.updateNodeEntryColors();
+        this.updateLayout();
+    }
+
+    clearSelectedNodeLog() {
+        this.selectedNodeId = null;
+        this.selectedNodeName = '';
+        this.selectedLogLines = [];
+
+        this.logTitleText.setText('');
+        this.logContentText.setText('');
+        this.logTitleText.setVisible(false);
+        this.logContentText.setVisible(false);
+    }
+
+    refreshSelectedNodeLog() {
+        if (!this.selectedNodeId) {
+            this.clearSelectedNodeLog();
+            return;
+        }
+
+        const entry = this.nodeEntries.get(this.selectedNodeId);
+
+        if (!entry || !entry.data) {
+            this.clearSelectedNodeLog();
+            return;
+        }
+
+        this.selectedNodeName = entry.data.name || entry.data.id || this.selectedNodeId;
+        this.selectedLogLines = this.buildLogLines(entry.data);
+
+        const title = `Activity Log — ${this.selectedNodeName}`;
+        this.logTitleText.setText(title);
+        this.logContentText.setText(this.selectedLogLines);
+        const shouldShow = this.isExpanded;
+        this.logTitleText.setVisible(shouldShow);
+        this.logContentText.setVisible(shouldShow);
+    }
+
+    buildLogLines(nodeData) {
+        const entries = Array.isArray(nodeData?.logEntries) ? nodeData.logEntries : [];
+
+        if (entries.length === 0) {
+            return ['(No recent activity recorded)'];
+        }
+
+        return entries.map((entry) => {
+            const rawMessage = typeof entry?.message === 'string' ? entry.message.trim() : '';
+            const message = rawMessage.length > 0 ? rawMessage : 'Status updated';
+            const rawTimeLabel = typeof entry?.timeLabel === 'string' ? entry.timeLabel.trim() : '';
+            const timeLabel = rawTimeLabel.length > 0
+                ? rawTimeLabel
+                : this.formatLogTimestamp(entry?.timestamp);
+
+            return `• [${timeLabel}] ${message}`;
+        });
+    }
+
+    formatLogTimestamp(timestamp) {
+        if (!Number.isFinite(timestamp)) {
+            return '0.0s';
+        }
+
+        const seconds = Math.max(0, timestamp) / 1000;
+        return `${seconds.toFixed(1)}s`;
+    }
+
+    applyNodeEntryColor(entry) {
+        if (!entry || !entry.text || entry.isHovered) {
+            return;
+        }
+
+        const isSelected = this.selectedNodeId === entry.id;
+        entry.text.setColor(isSelected ? NODE_HOVER_COLOR : NODE_STYLE.color);
+    }
+
+    updateNodeEntryColors() {
+        this.nodeEntries.forEach((entry) => {
+            this.applyNodeEntryColor(entry);
+        });
     }
 
     formatNodeLine(node, index) {
@@ -345,9 +515,10 @@ export class SimulationStatusPanel {
             const targetY = nodesStartY + (index * NODE_LINE_SPACING);
 
             entry.text.setPosition(PANEL_PADDING, targetY);
-            entry.text.setVisible(this.isExpanded);
+            const shouldShowNodes = this.isExpanded;
+            entry.text.setVisible(shouldShowNodes);
 
-            if (this.isExpanded) {
+            if (shouldShowNodes) {
                 entry.text.setInteractive({ useHandCursor: true });
             } else {
                 entry.text.disableInteractive();
@@ -355,12 +526,35 @@ export class SimulationStatusPanel {
         });
 
         const nodesHeight = this.isExpanded ? (this.sortedEntries.length * NODE_LINE_SPACING) : 0;
-        const requiredHeight = nodesStartY + nodesHeight + PANEL_PADDING;
+        let contentBottom = nodesStartY + nodesHeight;
+
+        const shouldShowLog = this.isExpanded && Boolean(this.selectedNodeId);
+
+        if (shouldShowLog) {
+            this.logTitleText.setVisible(true);
+            this.logContentText.setVisible(true);
+
+            this.logTitleText.setPosition(PANEL_PADDING, contentBottom + SECTION_SPACING);
+            this.logContentText.setPosition(
+                PANEL_PADDING,
+                this.logTitleText.y + this.logTitleText.height + (SECTION_SPACING / 2)
+            );
+
+            contentBottom = this.logContentText.y + this.logContentText.height;
+        } else {
+            this.logTitleText.setVisible(false);
+            this.logContentText.setVisible(false);
+        }
+
+        const requiredHeight = contentBottom + PANEL_PADDING;
         const maxContentWidth = Math.max(
             MIN_PANEL_WIDTH,
             this.titleText.width + (PANEL_PADDING * 2),
             this.summaryText.width + (PANEL_PADDING * 2),
             this.toggleText.width + (PANEL_PADDING * 2),
+            this.logHintText.visible ? this.logHintText.width + (PANEL_PADDING * 2) : 0,
+            this.logTitleText.visible ? this.logTitleText.width + (PANEL_PADDING * 2) : 0,
+            this.logContentText.visible ? this.logContentText.width + (PANEL_PADDING * 2) : 0,
             ...this.sortedEntries.map((entry) => entry.text.width + (PANEL_PADDING * 2))
         );
 
@@ -384,8 +578,17 @@ export class SimulationStatusPanel {
             PANEL_PADDING,
             this.summaryText.y + this.summaryText.height + SECTION_SPACING
         );
+        let nodesStartY = this.toggleText.y + this.toggleText.height + SECTION_SPACING;
 
-        return this.toggleText.y + this.toggleText.height + SECTION_SPACING;
+        if (this.isExpanded) {
+            this.logHintText.setVisible(true);
+            this.logHintText.setPosition(PANEL_PADDING, nodesStartY);
+            nodesStartY = this.logHintText.y + this.logHintText.height + SECTION_SPACING;
+        } else {
+            this.logHintText.setVisible(false);
+        }
+
+        return nodesStartY;
     }
 
     positionContainer() {
