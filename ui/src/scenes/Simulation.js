@@ -22,6 +22,7 @@ const DOG_TILE_WIDTH = 2;
 const DOG_TILE_HEIGHT = 2;
 const DOG_MOVE_INTERVAL_RANGE = { min: 2500, max: 6000 };
 const DOG_MOVE_PROBABILITY = 0.35;
+const MAX_RANDOM_PLACEMENT_ATTEMPTS = 40;
 
 const CAT_BLINK_INTERVAL_RANGE = { min: 2800, max: 5200 };
 const CAT_BLINK_DURATION = 250;
@@ -339,9 +340,16 @@ class Cat {
             return;
         }
 
-        const availableDirections = DIRECTIONS.filter((direction) =>
-            this.grid.containsTile(this.tileX + direction.x, this.tileY + direction.y)
-        );
+        const availableDirections = DIRECTIONS.filter((direction) => {
+            const nextTileX = this.tileX + direction.x;
+            const nextTileY = this.tileY + direction.y;
+
+            if (!this.grid.containsTile(nextTileX, nextTileY)) {
+                return false;
+            }
+
+            return !this.scene.isTileBlockedForCat(nextTileX, nextTileY, this);
+        });
 
         if (availableDirections.length === 0) {
             this.scheduleNextLook(time);
@@ -687,7 +695,7 @@ class Dog {
             const nextTileX = this.tileX + move.x;
             const nextTileY = this.tileY + move.y;
 
-            if (this.grid.canFitArea(nextTileX, nextTileY, this.tileWidth, this.tileHeight)) {
+            if (this.scene.canDogOccupyArea(nextTileX, nextTileY, this)) {
                 return { x: move.x, y: move.y };
             }
         }
@@ -962,6 +970,10 @@ export class Simulation extends Scene {
                 return;
             }
 
+            if (this.isTileBlockedForCat(catEntry.tileX, catEntry.tileY)) {
+                return;
+            }
+
             const defaultAttributes = attributePool.length > 0
                 ? attributePool[catIndex % attributePool.length]
                 : CAT_ATTRIBUTE_PRESETS[0];
@@ -982,7 +994,7 @@ export class Simulation extends Scene {
                 return;
             }
 
-            if (!this.grid.canFitArea(dogEntry.tileX, dogEntry.tileY, DOG_TILE_WIDTH, DOG_TILE_HEIGHT)) {
+            if (!this.canDogOccupyArea(dogEntry.tileX, dogEntry.tileY)) {
                 return;
             }
 
@@ -1020,8 +1032,23 @@ export class Simulation extends Scene {
         const attributePool = Phaser.Utils.Array.Shuffle([...CAT_ATTRIBUTE_PRESETS]);
 
         for (let i = 0; i < catCount; i++) {
-            const tileX = Phaser.Math.Between(0, this.grid.tileCountWidth - 1);
-            const tileY = Phaser.Math.Between(0, this.grid.tileCountHeight - 1);
+            let tileX = null;
+            let tileY = null;
+
+            for (let attempt = 0; attempt < MAX_RANDOM_PLACEMENT_ATTEMPTS; attempt++) {
+                const candidateX = Phaser.Math.Between(0, this.grid.tileCountWidth - 1);
+                const candidateY = Phaser.Math.Between(0, this.grid.tileCountHeight - 1);
+
+                if (!this.isTileBlockedForCat(candidateX, candidateY)) {
+                    tileX = candidateX;
+                    tileY = candidateY;
+                    break;
+                }
+            }
+
+            if (tileX === null || tileY === null) {
+                break;
+            }
 
             const attributeIndex = i % attributePool.length;
             const catAttributes = { ...attributePool[attributeIndex] };
@@ -1039,14 +1066,124 @@ export class Simulation extends Scene {
             const maxDogTileY = this.grid.tileCountHeight - DOG_TILE_HEIGHT;
 
             for (let i = 0; i < dogCount; i++) {
-                const tileX = Phaser.Math.Between(0, maxDogTileX);
-                const tileY = Phaser.Math.Between(0, maxDogTileY);
+                let tileX = null;
+                let tileY = null;
+
+                for (let attempt = 0; attempt < MAX_RANDOM_PLACEMENT_ATTEMPTS; attempt++) {
+                    const candidateX = Phaser.Math.Between(0, maxDogTileX);
+                    const candidateY = Phaser.Math.Between(0, maxDogTileY);
+
+                    if (this.canDogOccupyArea(candidateX, candidateY)) {
+                        tileX = candidateX;
+                        tileY = candidateY;
+                        break;
+                    }
+                }
+
+                if (tileX === null || tileY === null) {
+                    break;
+                }
 
                 const dog = new Dog(this, this.grid, tileX, tileY);
 
                 this.dogs.push(dog);
             }
         }
+    }
+
+    isTileOccupiedByCat(tileX, tileY, ignoreCat = null) {
+        return this.cats.some((cat) => {
+            if (cat === ignoreCat) {
+                return false;
+            }
+
+            if (cat.tileX === tileX && cat.tileY === tileY) {
+                return true;
+            }
+
+            if (cat.isMoving && cat.targetTileX === tileX && cat.targetTileY === tileY) {
+                return true;
+            }
+
+            return false;
+        });
+    }
+
+    doesAreaOverlapDog(tileX, tileY, width, height, ignoreDog = null) {
+        const areaMinX = tileX;
+        const areaMinY = tileY;
+        const areaMaxX = tileX + width - 1;
+        const areaMaxY = tileY + height - 1;
+
+        return this.dogs.some((dog) => {
+            if (dog === ignoreDog) {
+                return false;
+            }
+
+            const dogMinX = dog.tileX;
+            const dogMinY = dog.tileY;
+            const dogMaxX = dogMinX + dog.tileWidth - 1;
+            const dogMaxY = dogMinY + dog.tileHeight - 1;
+
+            const overlapsCurrent = !(
+                areaMaxX < dogMinX ||
+                areaMinX > dogMaxX ||
+                areaMaxY < dogMinY ||
+                areaMinY > dogMaxY
+            );
+
+            if (overlapsCurrent) {
+                return true;
+            }
+
+            if (!dog.isMoving) {
+                return false;
+            }
+
+            const targetMinX = dog.targetTileX;
+            const targetMinY = dog.targetTileY;
+            const targetMaxX = targetMinX + dog.tileWidth - 1;
+            const targetMaxY = targetMinY + dog.tileHeight - 1;
+
+            return !(
+                areaMaxX < targetMinX ||
+                areaMinX > targetMaxX ||
+                areaMaxY < targetMinY ||
+                areaMinY > targetMaxY
+            );
+        });
+    }
+
+    isTileOccupiedByDog(tileX, tileY, ignoreDog = null) {
+        return this.doesAreaOverlapDog(tileX, tileY, 1, 1, ignoreDog);
+    }
+
+    isTileBlockedForCat(tileX, tileY, ignoreCat = null) {
+        if (!this.grid || !this.grid.containsTile(tileX, tileY)) {
+            return true;
+        }
+
+        if (this.isTileOccupiedByCat(tileX, tileY, ignoreCat)) {
+            return true;
+        }
+
+        return this.isTileOccupiedByDog(tileX, tileY);
+    }
+
+    canDogOccupyArea(tileX, tileY, dog = null) {
+        if (!this.grid || !this.grid.canFitArea(tileX, tileY, DOG_TILE_WIDTH, DOG_TILE_HEIGHT)) {
+            return false;
+        }
+
+        for (let y = tileY; y < tileY + DOG_TILE_HEIGHT; y++) {
+            for (let x = tileX; x < tileX + DOG_TILE_WIDTH; x++) {
+                if (this.isTileOccupiedByCat(x, y)) {
+                    return false;
+                }
+            }
+        }
+
+        return !this.doesAreaOverlapDog(tileX, tileY, DOG_TILE_WIDTH, DOG_TILE_HEIGHT, dog);
     }
 
     enterWaitingForDataState() {
