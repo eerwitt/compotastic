@@ -43,6 +43,7 @@ jobs:
           retention-days: 1
 
   deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build-web
     runs-on: ubuntu-latest
     environment:
