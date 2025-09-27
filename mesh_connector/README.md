@@ -10,6 +10,8 @@ The connector publishes application data in the Meshtastic `MeshPacket.data` fie
 
 Run the protocol compiler whenever the `.proto` schema changes so that the mesh connector keeps its generated classes in sync. From the repository root, execute:
 
+Install [protoc](https://github.com/protocolbuffers/protobuf/releases)
+
 ```bash
 python -m grpc_tools.protoc \
   --proto_path=mesh_connector/protos \
