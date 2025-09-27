@@ -4,15 +4,15 @@ const DEMO_GRID_SIZE = { width: 25, height: 25 };
 const DEFAULT_DEMO_STATE = Object.freeze({
     grid: { ...DEMO_GRID_SIZE },
     cats: [
-        { tileX: 6, tileY: 6, attributes: { cpu: '68000 8MHz', ram: '512KB' } },
-        { tileX: 18, tileY: 6, attributes: { cpu: 'Pentium 100MHz', ram: '16MB' } },
-        { tileX: 6, tileY: 18, attributes: { cpu: 'Core 2 Duo 2.0GHz', ram: '2GB' } },
-        { tileX: 18, tileY: 18, attributes: { cpu: 'ARM Cortex-A9 1GHz', ram: '1GB' } },
-        { tileX: 12, tileY: 12, attributes: { cpu: 'Xeon 2.4GHz', ram: '8GB' } }
+        { identifier: 'demo-cat-alpha', tileX: 6, tileY: 6, attributes: { cpu: '68000 8MHz', ram: '512KB' } },
+        { identifier: 'demo-cat-bravo', tileX: 18, tileY: 6, attributes: { cpu: 'Pentium 100MHz', ram: '16MB' } },
+        { identifier: 'demo-cat-charlie', tileX: 6, tileY: 18, attributes: { cpu: 'Core 2 Duo 2.0GHz', ram: '2GB' } },
+        { identifier: 'demo-cat-delta', tileX: 18, tileY: 18, attributes: { cpu: 'ARM Cortex-A9 1GHz', ram: '1GB' } },
+        { identifier: 'demo-cat-epsilon', tileX: 12, tileY: 12, attributes: { cpu: 'Xeon 2.4GHz', ram: '8GB' } }
     ],
     dogs: [
-        { tileX: 10, tileY: 3 },
-        { tileX: 16, tileY: 14 }
+        { identifier: 'demo-dog-ranger', tileX: 10, tileY: 3 },
+        { identifier: 'demo-dog-scout', tileX: 16, tileY: 14 }
     ]
 });
 
@@ -27,6 +27,7 @@ export class DemoSimulation extends Simulation {
         super('DemoSimulation');
 
         this.goLiveButton = null;
+        this.isDemoSimulation = true;
         this.handleConnectionStatusChange = this.handleConnectionStatusChange.bind(this);
         this.repositionGoLiveButton = this.repositionGoLiveButton.bind(this);
     }
