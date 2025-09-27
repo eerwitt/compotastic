@@ -104,6 +104,23 @@ class GridWorldEnvironmentTests(unittest.TestCase):
         _, next_node, _, _ = env.step(node, int(Action.MOVE_RIGHT))
         self.assertEqual(next_node.location, GridLocation(3, 1))
 
+    def test_set_reward_updates_mapping(self) -> None:
+        env = GridWorldEnvironment(width=5, height=5)
+        location = GridLocation(2, 2)
+
+        env.set_reward(location, 7)
+        self.assertEqual(env.reward_at(location), 7)
+
+        rewards = env.rewards()
+        rewards[(2, 2)] = 99
+        self.assertEqual(env.reward_at(location), 7)
+
+        env.set_reward(location, 0)
+        self.assertEqual(env.reward_at(location), 0)
+
+        with self.assertRaises(ValueError):
+            env.set_reward(GridLocation(0, 0), 5)
+
 
 class QLearningAgentTests(unittest.TestCase):
     """Confirm the Q-learning agent updates values correctly."""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 from dataclasses_json import dataclass_json
 
@@ -28,12 +28,22 @@ class SimulationGrid:
 
 @dataclass_json
 @dataclass(frozen=True)
+class RewardTile:
+    """Serializable description of a reward positioned on the grid."""
+
+    location: GridLocation
+    value: int
+
+
+@dataclass_json
+@dataclass(frozen=True)
 class SimulationSnapshot:
     """Serializable view of the current simulation state."""
 
     grid: SimulationGrid
     cats: List[MeshtasticNode]
     dogs: List[MeshtasticNode]
+    rewards: List[RewardTile]
 
 
 class MeshSimulation:
@@ -50,6 +60,11 @@ class MeshSimulation:
         dog_count: int = 1,
         log_callback: Optional[Callable[[str], None]] = None,
         random_seed: Optional[int] = None,
+        reward_tiles: Optional[Sequence[Union["RewardTile", Tuple[int, int, int]]]] = None,
+        positive_reward_count: int = 0,
+        negative_reward_count: int = 0,
+        positive_reward_value: int = 5,
+        negative_reward_value: int = -5,
     ) -> None:
         if not isinstance(width, int) or width <= 0:
             raise ValueError("width must be a positive integer")
@@ -64,14 +79,27 @@ class MeshSimulation:
         if cat_count + dog_count > width * height:
             raise ValueError("Total number of agents cannot exceed available tiles")
 
+        if positive_reward_count < 0:
+            raise ValueError("positive_reward_count must be non-negative")
+        if negative_reward_count < 0:
+            raise ValueError("negative_reward_count must be non-negative")
+
         self._grid = SimulationGrid(width=width, height=height)
         self._log = log_callback or _default_logger
+        self._rng = random.Random(random_seed)
+        self._reward_tiles = self._initialize_reward_tiles(
+            reward_tiles or [],
+            positive_reward_count=positive_reward_count,
+            negative_reward_count=negative_reward_count,
+            positive_reward_value=positive_reward_value,
+            negative_reward_value=negative_reward_value,
+        )
         self._environment = GridWorldEnvironment(
             width,
             height,
+            rewards=self._reward_lookup(),
             log_callback=self._log,
         )
-        self._rng = random.Random(random_seed)
         self._tick = 0
         self._cat_idle_chance = 0.25
         self._dog_idle_chance = 0.45
@@ -99,8 +127,39 @@ class MeshSimulation:
         return SimulationSnapshot(
             grid=self._grid,
             cats=list(self._cats),
-            dogs=list(self._dogs)
+            dogs=list(self._dogs),
+            rewards=list(self._reward_tiles),
         )
+
+    @property
+    def environment(self) -> GridWorldEnvironment:
+        """Expose the underlying environment for reinforcement learning."""
+
+        return self._environment
+
+    def add_reward_tile(self, location: GridLocation, value: int) -> None:
+        """Add or update a reward tile on the grid interior."""
+
+        if not isinstance(location, GridLocation):
+            raise TypeError("location must be provided as a GridLocation instance")
+        if not isinstance(value, int):
+            raise TypeError("value must be provided as an integer")
+        if not self._is_interior(location):
+            raise ValueError("Rewards must be placed within the traversable interior")
+
+        tile = RewardTile(location=location, value=value)
+        replaced = False
+        updated: List[RewardTile] = []
+        for existing in self._reward_tiles:
+            if existing.location == location:
+                updated.append(tile)
+                replaced = True
+            else:
+                updated.append(existing)
+        if not replaced:
+            updated.append(tile)
+        self._reward_tiles = updated
+        self._environment.set_reward(location, value)
 
     def step(self) -> SimulationSnapshot:
         """Advance the simulation and return the resulting snapshot."""
@@ -239,9 +298,98 @@ class MeshSimulation:
         new_level = max(node.battery_level - drain_amount, 0.0)
         return node.with_battery_level(round(new_level, 2))
 
+    # ------------------------------------------------------------------
+    # Reward helpers
+    # ------------------------------------------------------------------
+    def _initialize_reward_tiles(
+        self,
+        explicit_tiles: Sequence[Union["RewardTile", Tuple[int, int, int]]],
+        *,
+        positive_reward_count: int,
+        negative_reward_count: int,
+        positive_reward_value: int,
+        negative_reward_value: int,
+    ) -> List[RewardTile]:
+        tiles: List[RewardTile] = []
+        occupied: Set[Tuple[int, int]] = set()
+
+        for tile in explicit_tiles:
+            if isinstance(tile, RewardTile):
+                location = tile.location
+                value = tile.value
+            else:
+                x, y, value = tile
+                location = GridLocation(int(x), int(y))
+            if not self._is_interior(location):
+                raise ValueError("Reward tiles must be placed within the grid interior")
+            coordinate = (location.x, location.y)
+            if coordinate in occupied:
+                raise ValueError("Duplicate reward tile location specified")
+            occupied.add(coordinate)
+            tiles.append(RewardTile(location=location, value=int(value)))
+
+        tiles.extend(
+            self._generate_random_rewards(
+                count=positive_reward_count,
+                value=positive_reward_value,
+                occupied=occupied,
+            )
+        )
+        tiles.extend(
+            self._generate_random_rewards(
+                count=negative_reward_count,
+                value=negative_reward_value,
+                occupied=occupied,
+            )
+        )
+        return tiles
+
+    def _generate_random_rewards(
+        self,
+        *,
+        count: int,
+        value: int,
+        occupied: Set[Tuple[int, int]],
+    ) -> Iterable[RewardTile]:
+        for _ in range(count):
+            location = self._random_interior_location(occupied)
+            occupied.add((location.x, location.y))
+            yield RewardTile(location=location, value=int(value))
+
+    def _random_interior_location(self, occupied: Set[Tuple[int, int]]) -> GridLocation:
+        attempts = 0
+        interior_width = self._grid.width - 2
+        interior_height = self._grid.height - 2
+        limit = max(1, interior_width * interior_height * 2)
+        while attempts < limit:
+            attempts += 1
+            candidate = GridLocation(
+                1 + self._rng.randrange(interior_width),
+                1 + self._rng.randrange(interior_height),
+            )
+            if (candidate.x, candidate.y) not in occupied:
+                return candidate
+
+        for y in range(1, self._grid.height - 1):
+            for x in range(1, self._grid.width - 1):
+                if (x, y) not in occupied:
+                    return GridLocation(x, y)
+
+        raise RuntimeError("Unable to place reward tiles on the grid")
+
+    def _is_interior(self, location: GridLocation) -> bool:
+        return 0 < location.x < self._grid.width - 1 and 0 < location.y < self._grid.height - 1
+
+    def _reward_lookup(self) -> Dict[Tuple[int, int], int]:
+        return {
+            (tile.location.x, tile.location.y): int(tile.value)
+            for tile in self._reward_tiles
+        }
+
 
 __all__ = [
     "MeshSimulation",
     "SimulationGrid",
     "SimulationSnapshot",
+    "RewardTile",
 ]
