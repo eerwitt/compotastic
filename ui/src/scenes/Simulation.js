@@ -1,14 +1,23 @@
 import Phaser, { Scene } from 'phaser';
 
 const DEFAULT_CAT_COUNT = 10;
+const DEFAULT_DOG_COUNT = 1;
 const CAT_ASCII = '^.^';
+const DOG_ASCII = '/\\_/\\\n( o.o)\n(  ^ )\n \\___/';
 const CAT_FONT_STYLE = { fontFamily: 'Courier', fontSize: 32, color: '#e27272ff' };
+const DOG_FONT_STYLE = { fontFamily: 'Courier', fontSize: 30, color: '#f5deb3ff', align: 'center' };
 const CAT_TILE_PADDING_RATIO = 0.2;
+const DOG_TILE_PADDING_RATIO = 0.15;
 const CAT_SPEED_RANGE = { min: 40, max: 140 };
+const DOG_SPEED_RANGE = { min: 25, max: 60 };
 const LOOK_INTERVAL_RANGE = { min: 800, max: 2200 };
 const GRID_TILE_COUNT = { width: 25, height: 25 };
 const GRID_LINE_COLOR = 0x615a3b;
 const GRID_LINE_ALPHA = 0.2;
+const DOG_TILE_WIDTH = 2;
+const DOG_TILE_HEIGHT = 2;
+const DOG_MOVE_INTERVAL_RANGE = { min: 2500, max: 6000 };
+const DOG_MOVE_PROBABILITY = 0.35;
 
 const DIRECTIONS = [
     { x: 0, y: -1 },
@@ -101,6 +110,17 @@ class Grid {
             tileX < this.tileCountWidth &&
             tileY < this.tileCountHeight
         );
+    }
+
+    canFitArea(tileX, tileY, width, height) {
+        if (width <= 0 || height <= 0) {
+            return false;
+        }
+
+        const maxTileX = tileX + width - 1;
+        const maxTileY = tileY + height - 1;
+
+        return this.containsTile(tileX, tileY) && this.containsTile(maxTileX, maxTileY);
     }
 
     destroy() {
@@ -236,6 +256,224 @@ class Cat {
         this.isMoving = false;
         this.scheduleNextLook(this.scene.time.now || 0);
     }
+
+    destroy() {
+        this.text.destroy();
+    }
+}
+
+class Dog {
+    constructor(scene, grid, tileX, tileY) {
+        this.scene = scene;
+        this.grid = grid;
+        this.tileWidth = DOG_TILE_WIDTH;
+        this.tileHeight = DOG_TILE_HEIGHT;
+        this.speed = Phaser.Math.Between(DOG_SPEED_RANGE.min, DOG_SPEED_RANGE.max);
+        this.text = scene.add.text(0, 0, DOG_ASCII, DOG_FONT_STYLE);
+        this.text.setOrigin(0.5, 0.5);
+
+        this.tileX = tileX;
+        this.tileY = tileY;
+
+        this.isMoving = false;
+        this.moveStartTime = 0;
+        this.moveDuration = 0;
+        this.startPixelX = 0;
+        this.startPixelY = 0;
+        this.targetTileX = tileX;
+        this.targetTileY = tileY;
+        this.targetPixelX = 0;
+        this.targetPixelY = 0;
+        this.nextMoveCheckTime = scene.time.now || 0;
+
+        this.onGridLayoutChanged();
+    }
+
+    computeAreaCenter(tileX, tileY) {
+        const topLeft = this.grid.tileToWorld(tileX, tileY);
+        const bottomRight = this.grid.tileToWorld(tileX + this.tileWidth - 1, tileY + this.tileHeight - 1);
+
+        return {
+            x: (topLeft.x + bottomRight.x) / 2,
+            y: (topLeft.y + bottomRight.y) / 2
+        };
+    }
+
+    setPosition(tileX, tileY) {
+        const position = this.computeAreaCenter(tileX, tileY);
+
+        this.tileX = tileX;
+        this.tileY = tileY;
+        this.targetTileX = tileX;
+        this.targetTileY = tileY;
+
+        this.text.setPosition(position.x, position.y);
+        this.targetPixelX = position.x;
+        this.targetPixelY = position.y;
+    }
+
+    scaleToTiles() {
+        const tileSize = this.grid.tileSize;
+        const areaWidth = tileSize * this.tileWidth;
+        const areaHeight = tileSize * this.tileHeight;
+        const horizontalPadding = areaWidth * DOG_TILE_PADDING_RATIO;
+        const verticalPadding = areaHeight * DOG_TILE_PADDING_RATIO;
+        const maxWidth = areaWidth - horizontalPadding;
+        const maxHeight = areaHeight - verticalPadding;
+        const textWidth = this.text.width;
+        const textHeight = this.text.height;
+
+        if (textWidth === 0 || textHeight === 0) {
+            this.text.setScale(1);
+            return;
+        }
+
+        const scale = Math.min(maxWidth / textWidth, maxHeight / textHeight);
+
+        this.text.setScale(scale);
+    }
+
+    scheduleNextMoveCheck(time) {
+        this.nextMoveCheckTime = time + Phaser.Math.Between(DOG_MOVE_INTERVAL_RANGE.min, DOG_MOVE_INTERVAL_RANGE.max);
+    }
+
+    beginMovement(tileX, tileY, time) {
+        const targetPosition = this.computeAreaCenter(tileX, tileY);
+
+        this.startPixelX = this.text.x;
+        this.startPixelY = this.text.y;
+        this.targetTileX = tileX;
+        this.targetTileY = tileY;
+        this.targetPixelX = targetPosition.x;
+        this.targetPixelY = targetPosition.y;
+
+        const distance = Phaser.Math.Distance.Between(
+            this.startPixelX,
+            this.startPixelY,
+            this.targetPixelX,
+            this.targetPixelY
+        );
+
+        this.moveDuration = distance > 0 ? (distance / this.speed) * 1000 : 0;
+        this.moveStartTime = time;
+        this.isMoving = true;
+    }
+
+    findClosestCat(cats) {
+        if (!cats || cats.length === 0) {
+            return null;
+        }
+
+        const center = this.computeAreaCenter(this.tileX, this.tileY);
+        let closest = null;
+        let closestDistance = Number.POSITIVE_INFINITY;
+
+        cats.forEach((cat) => {
+            const distance = Phaser.Math.Distance.Between(center.x, center.y, cat.text.x, cat.text.y);
+
+            if (distance < closestDistance) {
+                closest = cat;
+                closestDistance = distance;
+            }
+        });
+
+        return closest;
+    }
+
+    determineStepToward(cat) {
+        if (!cat) {
+            return null;
+        }
+
+        const dogCenterX = this.tileX + this.tileWidth / 2;
+        const dogCenterY = this.tileY + this.tileHeight / 2;
+        const catCenterX = cat.tileX + 0.5;
+        const catCenterY = cat.tileY + 0.5;
+
+        const diffX = catCenterX - dogCenterX;
+        const diffY = catCenterY - dogCenterY;
+
+        const moves = [];
+
+        if (Math.abs(diffX) >= 0.5) {
+            moves.push({ x: Math.sign(diffX), y: 0, priority: Math.abs(diffX) });
+        }
+
+        if (Math.abs(diffY) >= 0.5) {
+            moves.push({ x: 0, y: Math.sign(diffY), priority: Math.abs(diffY) });
+        }
+
+        if (moves.length === 0) {
+            return null;
+        }
+
+        moves.sort((a, b) => b.priority - a.priority);
+
+        for (const move of moves) {
+            const nextTileX = this.tileX + move.x;
+            const nextTileY = this.tileY + move.y;
+
+            if (this.grid.canFitArea(nextTileX, nextTileY, this.tileWidth, this.tileHeight)) {
+                return { x: move.x, y: move.y };
+            }
+        }
+
+        return null;
+    }
+
+    update(time, cats) {
+        if (this.isMoving) {
+            const elapsed = time - this.moveStartTime;
+            const progress = this.moveDuration > 0 ? Phaser.Math.Clamp(elapsed / this.moveDuration, 0, 1) : 1;
+
+            const currentX = Phaser.Math.Linear(this.startPixelX, this.targetPixelX, progress);
+            const currentY = Phaser.Math.Linear(this.startPixelY, this.targetPixelY, progress);
+
+            this.text.setPosition(currentX, currentY);
+
+            if (progress >= 1) {
+                this.isMoving = false;
+                this.setPosition(this.targetTileX, this.targetTileY);
+                this.scheduleNextMoveCheck(time);
+            }
+
+            return;
+        }
+
+        if (time < this.nextMoveCheckTime) {
+            return;
+        }
+
+        this.scheduleNextMoveCheck(time);
+
+        if (!cats || cats.length === 0) {
+            return;
+        }
+
+        if (Phaser.Math.FloatBetween(0, 1) > DOG_MOVE_PROBABILITY) {
+            return;
+        }
+
+        const targetCat = this.findClosestCat(cats);
+        const move = this.determineStepToward(targetCat);
+
+        if (!move) {
+            return;
+        }
+
+        this.beginMovement(this.tileX + move.x, this.tileY + move.y, time);
+    }
+
+    onGridLayoutChanged() {
+        this.scaleToTiles();
+        this.setPosition(this.tileX, this.tileY);
+        this.isMoving = false;
+        this.scheduleNextMoveCheck(this.scene.time.now || 0);
+    }
+
+    destroy() {
+        this.text.destroy();
+    }
 }
 
 export class Simulation extends Scene {
@@ -243,6 +481,7 @@ export class Simulation extends Scene {
         super('Simulation');
 
         this.cats = [];
+        this.dogs = [];
         this.grid = null;
 
         this.handleResize = this.handleResize.bind(this);
@@ -266,9 +505,19 @@ export class Simulation extends Scene {
                 this.grid.destroy();
                 this.grid = null;
             }
+
+            this.cats.forEach((cat) => cat.destroy());
+            this.dogs.forEach((dog) => dog.destroy());
+            this.cats = [];
+            this.dogs = [];
         });
 
-        for (let i = 0; i < DEFAULT_CAT_COUNT; i++) {
+        const configuredCatCount = this.registry.get('catCount');
+        const catCount = Number.isInteger(configuredCatCount) && configuredCatCount >= 0 ? configuredCatCount : DEFAULT_CAT_COUNT;
+        const configuredDogCount = this.registry.get('dogCount');
+        const dogCount = Number.isInteger(configuredDogCount) && configuredDogCount >= 0 ? configuredDogCount : DEFAULT_DOG_COUNT;
+
+        for (let i = 0; i < catCount; i++) {
             const tileX = Phaser.Math.Between(0, GRID_TILE_COUNT.width - 1);
             const tileY = Phaser.Math.Between(0, GRID_TILE_COUNT.height - 1);
 
@@ -277,10 +526,28 @@ export class Simulation extends Scene {
             cat.lookAround(this.time.now || 0);
             this.cats.push(cat);
         }
+
+        const canPlaceDog =
+            GRID_TILE_COUNT.width >= DOG_TILE_WIDTH && GRID_TILE_COUNT.height >= DOG_TILE_HEIGHT;
+
+        if (canPlaceDog) {
+            const maxDogTileX = GRID_TILE_COUNT.width - DOG_TILE_WIDTH;
+            const maxDogTileY = GRID_TILE_COUNT.height - DOG_TILE_HEIGHT;
+
+            for (let i = 0; i < dogCount; i++) {
+                const tileX = Phaser.Math.Between(0, maxDogTileX);
+                const tileY = Phaser.Math.Between(0, maxDogTileY);
+
+                const dog = new Dog(this, this.grid, tileX, tileY);
+
+                this.dogs.push(dog);
+            }
+        }
     }
 
     update(time) {
         this.cats.forEach((cat) => cat.update(time));
+        this.dogs.forEach((dog) => dog.update(time, this.cats));
     }
 
     handleResize(gameSize) {
@@ -297,5 +564,6 @@ export class Simulation extends Scene {
         this.cameras.main.centerOn(this.grid.pixelWidth / 2, this.grid.pixelHeight / 2);
 
         this.cats.forEach((cat) => cat.onGridLayoutChanged());
+        this.dogs.forEach((dog) => dog.onGridLayoutChanged());
     }
 }
