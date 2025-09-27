@@ -7,6 +7,7 @@ const DEFAULT_DOG_COUNT = 1;
 const DOG_FONT_STYLE = { fontFamily: 'Courier', fontSize: 30, color: '#f5deb3ff', align: 'center', fontStyle: 'bold' };
 
 const CAT_FACE = '^.^';
+const CAT_ALERT_SYMBOL = '/!\\';
 const CAT_FONT_STYLE = { fontFamily: 'Courier', fontSize: 32, color: '#e27272ff', fontStyle: 'bold' };
 const CAT_MODAL_FONT_STYLE = { fontFamily: 'Courier', fontSize: 20, color: '#f4e1c1ff', align: 'left' };
 const DOG_MODAL_FONT_STYLE = { fontFamily: 'Courier', fontSize: 20, color: '#f7f7dcff', align: 'left' };
@@ -29,6 +30,7 @@ const CAT_BLINK_INTERVAL_RANGE = { min: 2800, max: 5200 };
 const CAT_BLINK_DURATION = 250;
 const CAT_MOUTH_INTERVAL_RANGE = { min: 3400, max: 6800 };
 const CAT_MOUTH_OPEN_DURATION = 820;
+const CAT_ALERT_FLASH_INTERVAL_RANGE = { min: 300, max: 520 };
 
 const DOG_BLINK_INTERVAL_RANGE = { min: 3200, max: 6100 };
 const DOG_BLINK_DURATION = 270;
@@ -179,6 +181,72 @@ function createAsciiBox(lines) {
     return [horizontalBorder, ...paddedLines, horizontalBorder].join('\n');
 }
 
+function extractCatAlertDetails(attributes) {
+    const sanitizedAttributes = (attributes && typeof attributes === 'object')
+        ? { ...attributes }
+        : {};
+
+    const alertKeys = ['alert', 'alertType', 'alertStatus'];
+    let alertMessage = null;
+
+    for (const key of alertKeys) {
+        const value = sanitizedAttributes[key];
+
+        if (typeof value === 'string' && value.trim().length > 0) {
+            alertMessage = value.trim();
+            delete sanitizedAttributes[key];
+            break;
+        }
+    }
+
+    const needsKeys = ['needs', 'need', 'requirement', 'requires'];
+    let needsText = null;
+
+    for (const key of needsKeys) {
+        const value = sanitizedAttributes[key];
+
+        if (Array.isArray(value)) {
+            const joined = value
+                .map((item) => (typeof item === 'string' ? item.trim() : String(item)))
+                .filter((item) => item.length > 0)
+                .join(', ');
+
+            if (joined.length > 0) {
+                needsText = joined;
+                delete sanitizedAttributes[key];
+                break;
+            }
+        } else if (typeof value === 'string' && value.trim().length > 0) {
+            needsText = value.trim();
+            delete sanitizedAttributes[key];
+            break;
+        }
+    }
+
+    if (!alertMessage && !needsText) {
+        return { sanitizedAttributes, alertDetails: null };
+    }
+
+    const summaryParts = [];
+
+    if (alertMessage) {
+        summaryParts.push(alertMessage);
+    }
+
+    if (needsText) {
+        summaryParts.push(`Needs: ${needsText}`);
+    }
+
+    return {
+        sanitizedAttributes,
+        alertDetails: {
+            message: alertMessage,
+            needsText,
+            summary: summaryParts.join(' — ')
+        }
+    };
+}
+
 class Cat {
     constructor(scene, grid, tileX, tileY, attributes, identifier = null) {
         this.scene = scene;
@@ -190,7 +258,25 @@ class Cat {
         this.text.setDepth(5);
         this.text.setInteractive({ useHandCursor: true });
 
-        this.attributes = { ...attributes };
+        const { sanitizedAttributes, alertDetails } = extractCatAlertDetails(attributes);
+
+        this.attributes = sanitizedAttributes;
+        this.alertDetails = alertDetails;
+        this.alertFlashInterval = Phaser.Math.Between(
+            CAT_ALERT_FLASH_INTERVAL_RANGE.min,
+            CAT_ALERT_FLASH_INTERVAL_RANGE.max
+        );
+
+        if (this.alertDetails) {
+            this.isAlertSymbolVisible = true;
+            this.currentFace = CAT_ALERT_SYMBOL;
+            this.text.setText(this.currentFace);
+            this.nextAlertToggleTime = (scene.time.now || 0) + this.alertFlashInterval;
+        } else {
+            this.isAlertSymbolVisible = false;
+            this.nextAlertToggleTime = Number.POSITIVE_INFINITY;
+        }
+
         this.nodeIdentifier = (typeof identifier === 'string' && identifier.trim().length > 0)
             ? identifier.trim()
             : null;
@@ -259,17 +345,66 @@ class Cat {
     }
 
     buildModalContent() {
-        const lines = [
-            `CPU: ${this.attributes.cpu}`,
-            `RAM: ${this.attributes.ram}`,
-            `LOC: (${this.tileX}, ${this.tileY})`
-        ];
+        const lines = [];
 
         if (this.nodeIdentifier) {
-            lines.unshift(`Node: ${this.nodeIdentifier}`);
+            lines.push(`Node: ${this.nodeIdentifier}`);
         }
 
+        if (this.hasAlert()) {
+            lines.push(...this.getAlertModalLines());
+        }
+
+        const cpuLabel = typeof this.attributes.cpu === 'string' && this.attributes.cpu.trim().length > 0
+            ? this.attributes.cpu
+            : 'Unknown';
+        const ramLabel = typeof this.attributes.ram === 'string' && this.attributes.ram.trim().length > 0
+            ? this.attributes.ram
+            : 'Unknown';
+
+        lines.push(`CPU: ${cpuLabel}`);
+        lines.push(`RAM: ${ramLabel}`);
+        lines.push(`LOC: (${this.tileX}, ${this.tileY})`);
+
         return createAsciiBox(lines);
+    }
+
+    hasAlert() {
+        return Boolean(this.alertDetails);
+    }
+
+    getAlertStatusText() {
+        if (!this.alertDetails) {
+            return null;
+        }
+
+        if (typeof this.alertDetails.summary === 'string' && this.alertDetails.summary.trim().length > 0) {
+            return `ALERT — ${this.alertDetails.summary.trim()}`;
+        }
+
+        if (typeof this.alertDetails.message === 'string' && this.alertDetails.message.trim().length > 0) {
+            return `ALERT — ${this.alertDetails.message.trim()}`;
+        }
+
+        return 'ALERT — Condition detected';
+    }
+
+    getAlertModalLines() {
+        if (!this.alertDetails) {
+            return [];
+        }
+
+        const lines = ['STATE: ALERT'];
+
+        if (typeof this.alertDetails.message === 'string' && this.alertDetails.message.trim().length > 0) {
+            lines.push(`ALERT: ${this.alertDetails.message}`);
+        }
+
+        if (typeof this.alertDetails.needsText === 'string' && this.alertDetails.needsText.trim().length > 0) {
+            lines.push(`NEEDS: ${this.alertDetails.needsText}`);
+        }
+
+        return lines;
     }
 
     updateModalPosition() {
@@ -312,9 +447,15 @@ class Cat {
     }
 
     applyCurrentFace() {
-        const targetFace = this.isBlinking
-            ? CAT_BLINK_FACE
-            : (this.isMouthOpen ? CAT_MOUTH_FACE : CAT_FACE);
+        let targetFace = CAT_FACE;
+
+        if (this.hasAlert()) {
+            targetFace = this.isAlertSymbolVisible ? CAT_ALERT_SYMBOL : CAT_FACE;
+        } else if (this.isBlinking) {
+            targetFace = CAT_BLINK_FACE;
+        } else if (this.isMouthOpen) {
+            targetFace = CAT_MOUTH_FACE;
+        }
 
         if (targetFace !== this.currentFace) {
             this.currentFace = targetFace;
@@ -340,7 +481,24 @@ class Cat {
             this.beginMouthOpen(currentTime);
         }
 
+        this.updateAlertFlashing(currentTime);
         this.applyCurrentFace();
+    }
+
+    updateAlertFlashing(time) {
+        if (!this.hasAlert()) {
+            this.isAlertSymbolVisible = false;
+            return;
+        }
+
+        if (time >= this.nextAlertToggleTime) {
+            this.isAlertSymbolVisible = !this.isAlertSymbolVisible;
+            this.alertFlashInterval = Phaser.Math.Between(
+                CAT_ALERT_FLASH_INTERVAL_RANGE.min,
+                CAT_ALERT_FLASH_INTERVAL_RANGE.max
+            );
+            this.nextAlertToggleTime = time + this.alertFlashInterval;
+        }
     }
 
     lookAround(time) {
@@ -932,6 +1090,24 @@ export class Simulation extends Scene {
             attributes = this.deriveAttributesFromNode(entry);
         }
 
+        if (typeof entry.alert === 'string' && entry.alert.trim().length > 0) {
+            attributes = attributes ? { ...attributes, alert: entry.alert.trim() } : { alert: entry.alert.trim() };
+        }
+
+        const needsCandidate = entry.needs ?? entry.need ?? entry.requirement ?? entry.requires;
+
+        if (Array.isArray(needsCandidate)) {
+            const needsList = needsCandidate
+                .map((item) => (typeof item === 'string' ? item.trim() : String(item)))
+                .filter((item) => item.length > 0);
+
+            if (needsList.length > 0) {
+                attributes = attributes ? { ...attributes, needs: needsList } : { needs: needsList };
+            }
+        } else if (typeof needsCandidate === 'string' && needsCandidate.trim().length > 0) {
+            attributes = attributes ? { ...attributes, needs: needsCandidate.trim() } : { needs: needsCandidate.trim() };
+        }
+
         return { tileX, tileY, attributes, identifier };
     }
 
@@ -1489,6 +1665,18 @@ export class Simulation extends Scene {
             return 'Idle';
         }
 
+        if (typeof cat.hasAlert === 'function' && cat.hasAlert()) {
+            const alertStatus = typeof cat.getAlertStatusText === 'function'
+                ? cat.getAlertStatusText()
+                : null;
+
+            if (typeof alertStatus === 'string' && alertStatus.trim().length > 0) {
+                return alertStatus;
+            }
+
+            return 'ALERT — Condition detected';
+        }
+
         if (cat.isMoving) {
             return 'Relocating across mesh';
         }
@@ -1525,7 +1713,9 @@ export class Simulation extends Scene {
     }
 
     isCatActive(cat) {
-        return Boolean(cat && (cat.isMoving || cat.isMouthOpen));
+        const hasAlert = Boolean(cat && typeof cat.hasAlert === 'function' && cat.hasAlert());
+
+        return Boolean(cat && (cat.isMoving || cat.isMouthOpen || hasAlert));
     }
 
     isDogActive(dog) {
