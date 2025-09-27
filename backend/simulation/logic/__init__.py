@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from dataclasses import replace
 from typing import Iterable
 
+from dataclasses_json import dataclass_json
 
+
+@dataclass_json
 @dataclass(frozen=True)
 class LogicProbe:
     """Lightweight object used to verify simulation logic imports."""
@@ -19,6 +22,7 @@ class LogicProbe:
         return True
 
 
+@dataclass_json
 @dataclass(frozen=True)
 class GridLocation:
     """Simple integer based coordinate used to place nodes on a 2D grid."""
@@ -38,6 +42,7 @@ class GridLocation:
         return GridLocation(self.x + dx, self.y + dy)
 
 
+@dataclass_json
 @dataclass(frozen=True)
 class MeshtasticNode:
     """Representation of a Meshtastic node used in the simulation grid."""
