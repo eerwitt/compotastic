@@ -34,20 +34,12 @@ class SimulationSnapshot:
     grid: SimulationGrid
     cats: List[MeshtasticNode]
     dogs: List[MeshtasticNode]
-    ascii_map: List[str]
 
 
 class MeshSimulation:
     """Lightweight runtime that coordinates cats and dogs on a grid."""
 
     update_interval_seconds: float = 0.75
-
-    _BORDER_COLOR_CODE = "\x1b[38;5;94m"
-    _COLOR_RESET_CODE = "\x1b[0m"
-    _BORDER_SYMBOL = "▓"
-    _CAT_SYMBOL = "C"
-    _DOG_SYMBOL = "D"
-    _EMPTY_SYMBOL = "·"
 
     def __init__(
         self,
@@ -107,8 +99,7 @@ class MeshSimulation:
         return SimulationSnapshot(
             grid=self._grid,
             cats=list(self._cats),
-            dogs=list(self._dogs),
-            ascii_map=self._build_ascii_map(),
+            dogs=list(self._dogs)
         )
 
     def step(self) -> SimulationSnapshot:
@@ -247,37 +238,6 @@ class MeshSimulation:
         drain_amount = self._rng.uniform(0.05, 0.35)
         new_level = max(node.battery_level - drain_amount, 0.0)
         return node.with_battery_level(round(new_level, 2))
-
-    def _is_border(self, x: int, y: int) -> bool:
-        return (
-            x == 0
-            or y == 0
-            or x == self._grid.width - 1
-            or y == self._grid.height - 1
-        )
-
-    def _border_cell(self) -> str:
-        return f"{self._BORDER_COLOR_CODE}{self._BORDER_SYMBOL}{self._COLOR_RESET_CODE}"
-
-    def _build_ascii_map(self) -> List[str]:
-        """Construct an ASCII representation of the grid with a brown border."""
-
-        rows: List[List[str]] = []
-        for y in range(self._grid.height):
-            row: List[str] = []
-            for x in range(self._grid.width):
-                if self._is_border(x, y):
-                    row.append(self._border_cell())
-                else:
-                    row.append(self._EMPTY_SYMBOL)
-            rows.append(row)
-
-        for cat in self._cats:
-            rows[cat.location.y][cat.location.x] = self._CAT_SYMBOL
-        for dog in self._dogs:
-            rows[dog.location.y][dog.location.x] = self._DOG_SYMBOL
-
-        return [" ".join(row) for row in rows]
 
 
 __all__ = [
