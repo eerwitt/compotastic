@@ -8,9 +8,11 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tupl
 
 from dataclasses_json import dataclass_json
 
+from .logic import Action
 from .logic import GridLocation
 from .logic import GridWorldEnvironment
 from .logic import MeshtasticNode
+from .logic import _ACTION_TO_VECTOR
 from .logic import _default_logger
 
 
@@ -285,10 +287,21 @@ class MeshSimulation:
         self._rng.shuffle(actions)
 
         for action in actions:
-            _, candidate, _, _ = self._environment.step(node, int(action))
-            position = (candidate.location.x, candidate.location.y)
-            if position in occupied:
+            try:
+                resolved_action = Action(int(action))
+            except ValueError:
                 continue
+
+            if resolved_action in _ACTION_TO_VECTOR:
+                dx, dy = _ACTION_TO_VECTOR[resolved_action]
+                candidate_position = (
+                    node.location.x + dx,
+                    node.location.y + dy,
+                )
+                if candidate_position in occupied:
+                    continue
+
+            _, candidate, _, _ = self._environment.step(node, int(action))
             return self._drain_battery(candidate)
 
         return self._drain_battery(node)
