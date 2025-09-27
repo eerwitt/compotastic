@@ -6,7 +6,7 @@ import json
 
 from unittest.mock import patch
 
-from simulation.logic import GridLocation
+from simulation.logic import Action, GridLocation
 from simulation.runtime import MeshSimulation
 
 
@@ -95,3 +95,41 @@ def test_move_node_skips_occupied_tiles_without_side_effects() -> None:
     assert (updated.location.x, updated.location.y) != (2, 1)
     env_state = simulation.environment._node_states[cat.identifier]
     assert env_state.location == updated.location
+
+
+def test_nodes_that_stop_remain_stationary() -> None:
+    simulation = MeshSimulation(width=5, height=5, cat_count=1, dog_count=0, random_seed=7)
+
+    cat = simulation.snapshot().cats[0].with_location(GridLocation(2, 2))
+    simulation._cats = [cat]
+    simulation.environment._node_states[cat.identifier] = cat
+
+    class StopFirstRandom:
+        def random(self) -> float:
+            return 0.9
+
+        def shuffle(self, sequence) -> None:
+            stop_value = Action.STOP.value
+            if stop_value in sequence:
+                sequence.remove(stop_value)
+                sequence.insert(0, stop_value)
+
+        def uniform(self, start: float, end: float) -> float:
+            return start
+
+        def randrange(self, upper: int) -> int:
+            return 0
+
+    simulation._rng = StopFirstRandom()
+
+    initial_location = simulation.snapshot().cats[0].location
+
+    simulation.step()
+    after_stop = simulation.snapshot().cats[0]
+
+    assert after_stop.location == initial_location
+
+    simulation.step()
+    later_snapshot = simulation.snapshot().cats[0]
+
+    assert later_snapshot.location == initial_location

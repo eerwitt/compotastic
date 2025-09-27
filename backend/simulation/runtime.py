@@ -106,6 +106,7 @@ class MeshSimulation:
         self._cat_idle_chance = 0.25
         self._dog_idle_chance = 0.45
         self._dog_move_interval = 3
+        self._completed_nodes: Set[str] = set()
 
         occupied: CoordinateSet = set()
         self._cats = self._spawn_agents(
@@ -255,12 +256,23 @@ class MeshSimulation:
     ) -> List[MeshtasticNode]:
         updated: List[MeshtasticNode] = []
         for node in nodes:
+            if node.identifier in self._completed_nodes:
+                stationary_node = self._drain_battery(node)
+                occupied.add((stationary_node.location.x, stationary_node.location.y))
+                self._environment._node_states[node.identifier] = stationary_node
+                updated.append(stationary_node)
+                continue
+
             occupied.discard((node.location.x, node.location.y))
-            next_node = self._move_node(
+            next_node, completed = self._move_node(
                 node,
                 occupied,
                 idle_probability=idle_probability,
             )
+            if completed:
+                self._completed_nodes.add(node.identifier)
+            else:
+                self._completed_nodes.discard(node.identifier)
             occupied.add((next_node.location.x, next_node.location.y))
             updated.append(next_node)
         return updated
@@ -271,18 +283,18 @@ class MeshSimulation:
         occupied: CoordinateSet,
         *,
         idle_probability: float,
-    ) -> MeshtasticNode:
+    ) -> Tuple[MeshtasticNode, bool]:
         idle_probability = float(idle_probability)
         idle_probability = min(max(idle_probability, 0.0), 1.0)
 
         if self._rng.random() < idle_probability:
-            return self._drain_battery(node)
+            return self._drain_battery(node), False
 
         surroundings = self._environment.surroundings_for(node.location)
         actions = list(surroundings.available_actions())
 
         if not actions:
-            return self._drain_battery(node)
+            return self._drain_battery(node), False
 
         self._rng.shuffle(actions)
 
@@ -301,10 +313,10 @@ class MeshSimulation:
                 if candidate_position in occupied:
                     continue
 
-            _, candidate, _, _ = self._environment.step(node, int(action))
-            return self._drain_battery(candidate)
+            _, candidate, _, done = self._environment.step(node, int(action))
+            return self._drain_battery(candidate), done
 
-        return self._drain_battery(node)
+        return self._drain_battery(node), False
 
     def _drain_battery(self, node: MeshtasticNode) -> MeshtasticNode:
         drain_amount = self._rng.uniform(0.05, 0.35)
