@@ -59,6 +59,7 @@ export class SimulationStatusPanel {
         this.onNodeHoverEnd = onNodeHoverEnd;
         this.isDemo = Boolean(isDemo);
         this.isExpanded = false;
+        this.isSuspended = false;
         this.nodeEntries = new Map();
         this.sortedEntries = [];
         this.panelWidth = MIN_PANEL_WIDTH;
@@ -98,6 +99,20 @@ export class SimulationStatusPanel {
         this.updateLayout();
     }
 
+    setSuspended(isSuspended) {
+        const shouldSuspend = Boolean(isSuspended);
+
+        if (this.isSuspended === shouldSuspend) {
+            return;
+        }
+
+        this.isSuspended = shouldSuspend;
+
+        if (this.container && typeof this.container.setVisible === 'function') {
+            this.container.setVisible(!shouldSuspend);
+        }
+    }
+
     destroy() {
         this.nodeEntries.forEach((entry) => {
             entry.text.destroy();
@@ -113,6 +128,10 @@ export class SimulationStatusPanel {
     }
 
     update(data) {
+        if (this.isSuspended) {
+            return;
+        }
+
         const safeData = data || {};
         this.isDemo = Boolean(safeData.isDemo);
 
