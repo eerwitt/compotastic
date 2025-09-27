@@ -51,7 +51,7 @@ export class Preloader extends Scene {
         });
 
         this.scene.transition({
-            target: 'Simulation',
+            target: 'DemoSimulation',
             duration: 10,
             moveBelow: true,
             onUpdate: (progress) => {

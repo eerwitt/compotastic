@@ -769,26 +769,47 @@ class Dog {
 }
 
 export class Simulation extends Scene {
-    constructor() {
-        super('Simulation');
+    constructor(sceneKey = 'Simulation') {
+        super(sceneKey);
 
         this.cats = [];
         this.dogs = [];
         this.grid = null;
+        this.waitingText = null;
+        this.shouldReceiveRemoteUpdates = false;
+        this.isWaitingForData = false;
 
         this.handleResize = this.handleResize.bind(this);
+        this.handleSimulationData = this.handleSimulationData.bind(this);
     }
 
     preload() {
         //  No external assets required for the ASCII cats.
     }
 
-    create() {
+    create(data = {}) {
         this.cameras.main.setBackgroundColor('#3c341bff');
 
-        this.grid = new Grid(this, GRID_TILE_COUNT.width, GRID_TILE_COUNT.height);
-        this.handleResize(this.scale.gameSize);
+        this.shouldReceiveRemoteUpdates = Boolean(data?.waitForRemoteData);
+
+        const initialConfig = this.normalizeSimulationConfig(data?.simulationConfig);
+        const initialGridWidth = initialConfig?.grid?.width ?? GRID_TILE_COUNT.width;
+        const initialGridHeight = initialConfig?.grid?.height ?? GRID_TILE_COUNT.height;
+
+        this.updateGridDimensions(initialGridWidth, initialGridHeight);
         this.scale.on('resize', this.handleResize);
+
+        if (initialConfig) {
+            this.applySimulationConfig(initialConfig);
+        } else if (this.shouldReceiveRemoteUpdates) {
+            this.enterWaitingForDataState();
+        } else {
+            this.populateRandom();
+        }
+
+        if (this.shouldReceiveRemoteUpdates) {
+            this.game.events.on('simulation-data', this.handleSimulationData, this);
+        }
 
         this.events.once('shutdown', () => {
             this.scale.off('resize', this.handleResize);
@@ -798,22 +819,209 @@ export class Simulation extends Scene {
                 this.grid = null;
             }
 
-            this.cats.forEach((cat) => cat.destroy());
-            this.dogs.forEach((dog) => dog.destroy());
-            this.cats = [];
-            this.dogs = [];
+            this.clearAnimals();
+            this.exitWaitingForDataState();
+
+            if (this.shouldReceiveRemoteUpdates) {
+                this.game.events.off('simulation-data', this.handleSimulationData, this);
+            }
+
+            this.shouldReceiveRemoteUpdates = false;
+        });
+    }
+
+    normalizeSimulationConfig(rawConfig) {
+        if (!rawConfig || typeof rawConfig !== 'object') {
+            return null;
+        }
+
+        const gridSource = (typeof rawConfig.grid === 'object' && rawConfig.grid !== null)
+            ? rawConfig.grid
+            : rawConfig;
+
+        const widthCandidate = gridSource?.width;
+        const heightCandidate = gridSource?.height;
+
+        const width = Number.isInteger(widthCandidate) && widthCandidate > 0
+            ? widthCandidate
+            : GRID_TILE_COUNT.width;
+        const height = Number.isInteger(heightCandidate) && heightCandidate > 0
+            ? heightCandidate
+            : GRID_TILE_COUNT.height;
+
+        const cats = Array.isArray(rawConfig.cats)
+            ? rawConfig.cats.map((entry) => this.normalizeCatEntry(entry))
+            : [];
+        const dogs = Array.isArray(rawConfig.dogs)
+            ? rawConfig.dogs.map((entry) => this.normalizeDogEntry(entry))
+            : [];
+
+        return {
+            grid: { width, height },
+            cats,
+            dogs
+        };
+    }
+
+    normalizeCatEntry(entry) {
+        if (!entry || typeof entry !== 'object') {
+            return { tileX: null, tileY: null, attributes: null };
+        }
+
+        const tileX = this.extractTileCoordinate(entry, 'x');
+        const tileY = this.extractTileCoordinate(entry, 'y');
+        const attributes = (entry.attributes && typeof entry.attributes === 'object')
+            ? { ...entry.attributes }
+            : null;
+
+        return { tileX, tileY, attributes };
+    }
+
+    normalizeDogEntry(entry) {
+        if (!entry || typeof entry !== 'object') {
+            return { tileX: null, tileY: null };
+        }
+
+        const tileX = this.extractTileCoordinate(entry, 'x');
+        const tileY = this.extractTileCoordinate(entry, 'y');
+
+        return { tileX, tileY };
+    }
+
+    extractTileCoordinate(entry, axis) {
+        const axisKey = axis.toLowerCase();
+        const tileKey = `tile${axis.toUpperCase()}`;
+
+        if (Number.isInteger(entry[tileKey])) {
+            return entry[tileKey];
+        }
+
+        if (Number.isInteger(entry[axisKey])) {
+            return entry[axisKey];
+        }
+
+        if (entry.position && Number.isInteger(entry.position[axisKey])) {
+            return entry.position[axisKey];
+        }
+
+        return null;
+    }
+
+    applySimulationConfig(config) {
+        if (!config) {
+            return;
+        }
+
+        this.exitWaitingForDataState();
+        this.updateGridDimensions(config.grid?.width, config.grid?.height);
+        this.rebuildAnimalsFromConfig(config);
+    }
+
+    updateGridDimensions(widthCandidate, heightCandidate) {
+        const width = Number.isInteger(widthCandidate) && widthCandidate > 0
+            ? widthCandidate
+            : GRID_TILE_COUNT.width;
+        const height = Number.isInteger(heightCandidate) && heightCandidate > 0
+            ? heightCandidate
+            : GRID_TILE_COUNT.height;
+
+        if (
+            this.grid &&
+            this.grid.tileCountWidth === width &&
+            this.grid.tileCountHeight === height
+        ) {
+            this.handleResize(this.scale.gameSize);
+
+            return;
+        }
+
+        if (this.grid) {
+            this.grid.destroy();
+        }
+
+        this.grid = new Grid(this, width, height);
+        this.handleResize(this.scale.gameSize);
+    }
+
+    rebuildAnimalsFromConfig(config) {
+        this.clearAnimals();
+
+        if (!this.grid) {
+            return;
+        }
+
+        const attributePool = Phaser.Utils.Array.Shuffle([...CAT_ATTRIBUTE_PRESETS]);
+
+        let catIndex = 0;
+        config.cats.forEach((catEntry) => {
+            if (!Number.isInteger(catEntry.tileX) || !Number.isInteger(catEntry.tileY)) {
+                return;
+            }
+
+            if (!this.grid.containsTile(catEntry.tileX, catEntry.tileY)) {
+                return;
+            }
+
+            const defaultAttributes = attributePool.length > 0
+                ? attributePool[catIndex % attributePool.length]
+                : CAT_ATTRIBUTE_PRESETS[0];
+
+            const catAttributes = catEntry.attributes
+                ? { ...defaultAttributes, ...catEntry.attributes }
+                : { ...defaultAttributes };
+
+            const cat = new Cat(this, this.grid, catEntry.tileX, catEntry.tileY, catAttributes);
+
+            cat.lookAround(this.time.now || 0);
+            this.cats.push(cat);
+            catIndex += 1;
         });
 
+        config.dogs.forEach((dogEntry) => {
+            if (!Number.isInteger(dogEntry.tileX) || !Number.isInteger(dogEntry.tileY)) {
+                return;
+            }
+
+            if (!this.grid.canFitArea(dogEntry.tileX, dogEntry.tileY, DOG_TILE_WIDTH, DOG_TILE_HEIGHT)) {
+                return;
+            }
+
+            const dog = new Dog(this, this.grid, dogEntry.tileX, dogEntry.tileY);
+
+            this.dogs.push(dog);
+        });
+    }
+
+    clearAnimals() {
+        this.cats.forEach((cat) => cat.destroy());
+        this.dogs.forEach((dog) => dog.destroy());
+
+        this.cats = [];
+        this.dogs = [];
+    }
+
+    populateRandom() {
+        this.exitWaitingForDataState();
+        this.clearAnimals();
+
+        if (!this.grid) {
+            return;
+        }
+
         const configuredCatCount = this.registry.get('catCount');
-        const catCount = Number.isInteger(configuredCatCount) && configuredCatCount >= 0 ? configuredCatCount : DEFAULT_CAT_COUNT;
+        const catCount = Number.isInteger(configuredCatCount) && configuredCatCount >= 0
+            ? configuredCatCount
+            : DEFAULT_CAT_COUNT;
         const configuredDogCount = this.registry.get('dogCount');
-        const dogCount = Number.isInteger(configuredDogCount) && configuredDogCount >= 0 ? configuredDogCount : DEFAULT_DOG_COUNT;
+        const dogCount = Number.isInteger(configuredDogCount) && configuredDogCount >= 0
+            ? configuredDogCount
+            : DEFAULT_DOG_COUNT;
 
         const attributePool = Phaser.Utils.Array.Shuffle([...CAT_ATTRIBUTE_PRESETS]);
 
         for (let i = 0; i < catCount; i++) {
-            const tileX = Phaser.Math.Between(0, GRID_TILE_COUNT.width - 1);
-            const tileY = Phaser.Math.Between(0, GRID_TILE_COUNT.height - 1);
+            const tileX = Phaser.Math.Between(0, this.grid.tileCountWidth - 1);
+            const tileY = Phaser.Math.Between(0, this.grid.tileCountHeight - 1);
 
             const attributeIndex = i % attributePool.length;
             const catAttributes = { ...attributePool[attributeIndex] };
@@ -824,12 +1032,11 @@ export class Simulation extends Scene {
             this.cats.push(cat);
         }
 
-        const canPlaceDog =
-            GRID_TILE_COUNT.width >= DOG_TILE_WIDTH && GRID_TILE_COUNT.height >= DOG_TILE_HEIGHT;
+        const canPlaceDog = this.grid.canFitArea(0, 0, DOG_TILE_WIDTH, DOG_TILE_HEIGHT);
 
         if (canPlaceDog) {
-            const maxDogTileX = GRID_TILE_COUNT.width - DOG_TILE_WIDTH;
-            const maxDogTileY = GRID_TILE_COUNT.height - DOG_TILE_HEIGHT;
+            const maxDogTileX = this.grid.tileCountWidth - DOG_TILE_WIDTH;
+            const maxDogTileY = this.grid.tileCountHeight - DOG_TILE_HEIGHT;
 
             for (let i = 0; i < dogCount; i++) {
                 const tileX = Phaser.Math.Between(0, maxDogTileX);
@@ -840,6 +1047,59 @@ export class Simulation extends Scene {
                 this.dogs.push(dog);
             }
         }
+    }
+
+    enterWaitingForDataState() {
+        if (this.isWaitingForData) {
+            return;
+        }
+
+        this.isWaitingForData = true;
+
+        this.waitingText = this.add.text(0, 0, 'Awaiting simulation data...\nSyncing with server.', {
+            fontFamily: 'Courier',
+            fontSize: 24,
+            color: '#f7f7dcff',
+            align: 'center'
+        });
+
+        this.waitingText.setDepth(1000);
+        this.waitingText.setScrollFactor(0);
+        this.waitingText.setOrigin(0.5, 0.5);
+        this.positionWaitingText();
+    }
+
+    exitWaitingForDataState() {
+        this.isWaitingForData = false;
+
+        if (this.waitingText) {
+            this.waitingText.destroy();
+            this.waitingText = null;
+        }
+    }
+
+    positionWaitingText() {
+        if (!this.waitingText) {
+            return;
+        }
+
+        const size = this.scale.gameSize || { width: 0, height: 0 };
+
+        this.waitingText.setPosition(size.width / 2, size.height / 2);
+    }
+
+    handleSimulationData(payload) {
+        if (!this.shouldReceiveRemoteUpdates) {
+            return;
+        }
+
+        const config = this.normalizeSimulationConfig(payload);
+
+        if (!config) {
+            return;
+        }
+
+        this.applySimulationConfig(config);
     }
 
     update(time) {
@@ -862,5 +1122,7 @@ export class Simulation extends Scene {
 
         this.cats.forEach((cat) => cat.onGridLayoutChanged());
         this.dogs.forEach((dog) => dog.onGridLayoutChanged());
+
+        this.positionWaitingText();
     }
 }
