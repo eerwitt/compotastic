@@ -25,7 +25,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Build Arcade web bundle
-        run: pygbag --build src/ui/main.py
+        run: pygbag --html --build simulation
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
