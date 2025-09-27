@@ -1,5 +1,6 @@
 import Phaser, { Scene } from 'phaser';
 import { SimulationStatusPanel } from './SimulationStatusPanel';
+import { ImageClassificationModal, DEFAULT_IMAGE_PROMPT } from '../modals/ImageClassificationModal';
 
 const DEFAULT_CAT_COUNT = 10;
 const DEFAULT_DOG_COUNT = 1;
@@ -1250,11 +1251,13 @@ export class Simulation extends Scene {
         this.lastSimulationUpdate = null;
         this.isDemoSimulation = false;
         this.rewardMarkers = [];
+        this.imageModal = null;
 
         this.handleResize = this.handleResize.bind(this);
         this.handleSimulationData = this.handleSimulationData.bind(this);
         this.handleNodeHover = this.handleNodeHover.bind(this);
         this.handleNodeHoverEnd = this.handleNodeHoverEnd.bind(this);
+        this.handleGridPointerUp = this.handleGridPointerUp.bind(this);
     }
 
     preload() {
@@ -1282,6 +1285,11 @@ export class Simulation extends Scene {
             onNodeHoverEnd: this.handleNodeHoverEnd,
             isDemo: this.isDemoSimulation
         });
+
+        this.imageModal = new ImageClassificationModal({
+            defaultPrompt: DEFAULT_IMAGE_PROMPT
+        });
+        this.input.on('pointerup', this.handleGridPointerUp, this);
 
         if (initialConfig) {
             this.applySimulationConfig(initialConfig);
@@ -1317,6 +1325,15 @@ export class Simulation extends Scene {
             }
 
             this.activeHighlight = null;
+
+            if (this.input) {
+                this.input.off('pointerup', this.handleGridPointerUp, this);
+            }
+
+            if (this.imageModal) {
+                this.imageModal.destroy();
+                this.imageModal = null;
+            }
 
             if (this.shouldReceiveRemoteUpdates) {
                 this.game.events.off('simulation-data', this.handleSimulationData, this);
@@ -2167,6 +2184,66 @@ export class Simulation extends Scene {
     handleNodeHoverEnd() {
         this.activeHighlight = null;
         this.clearNodeHighlight();
+    }
+
+    async handleGridPointerUp(pointer, currentlyOver = []) {
+        if (!this.grid || !pointer) {
+            return;
+        }
+
+        if (this.imageModal && this.imageModal.isOpen()) {
+            return;
+        }
+
+        if (Array.isArray(currentlyOver) && currentlyOver.length > 0) {
+            const hasInteractiveTarget = currentlyOver.some((target) => target && target.input && target.input.enabled);
+
+            if (hasInteractiveTarget) {
+                return;
+            }
+        }
+
+        const nativeEvent = pointer.event;
+
+        if (nativeEvent && typeof nativeEvent.button === 'number' && nativeEvent.button !== 0) {
+            return;
+        }
+
+        const worldX = typeof pointer.worldX === 'number' ? pointer.worldX : NaN;
+        const worldY = typeof pointer.worldY === 'number' ? pointer.worldY : NaN;
+
+        if (!Number.isFinite(worldX) || !Number.isFinite(worldY)) {
+            return;
+        }
+
+        if (worldX < 0 || worldY < 0) {
+            return;
+        }
+
+        if (worldX >= this.grid.pixelWidth || worldY >= this.grid.pixelHeight) {
+            return;
+        }
+
+        const tileX = Math.floor(worldX / this.grid.tileSize);
+        const tileY = Math.floor(worldY / this.grid.tileSize);
+
+        if (!Number.isInteger(tileX) || !Number.isInteger(tileY)) {
+            return;
+        }
+
+        if (!this.grid.containsTile(tileX, tileY)) {
+            return;
+        }
+
+        if (this.isTileBlockedForCat(tileX, tileY)) {
+            return;
+        }
+
+        try {
+            await this.imageModal.open({ tileX, tileY });
+        } catch (error) {
+            console.warn('Failed to open image classification modal', error);
+        }
     }
 
     drawHighlight(nodeData) {
