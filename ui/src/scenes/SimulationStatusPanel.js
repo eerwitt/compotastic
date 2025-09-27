@@ -123,25 +123,37 @@ export class SimulationStatusPanel {
     }
 
     updateSummary(data) {
-        const grid = data.grid || { width: 0, height: 0 };
-        const catCount = Number.isInteger(data.catCount) ? data.catCount : 0;
-        const dogCount = Number.isInteger(data.dogCount) ? data.dogCount : 0;
-        const totalNodes = Number.isInteger(data.totalNodes) ? data.totalNodes : (catCount + dogCount);
-        const activeNodes = Number.isInteger(data.activeNodes) ? data.activeNodes : 0;
+        if (!this.summaryText || typeof this.summaryText.setText !== 'function') {
+            return;
+        }
 
-        const modeLabel = this.resolveModeLabel(data);
-        const gridLine = `Grid: ${grid.width} × ${grid.height}`;
-        const populationLine = `Population: ${catCount} cats / ${dogCount} dogs`;
-        const activityLine = this.resolveActivityLine(totalNodes, activeNodes);
-        const lastUpdateLine = this.resolveLastUpdateLine(data);
+        const grid = data.grid || {};
+        const catCount = this.coerceNonNegativeInteger(data.catCount, 0);
+        const dogCount = this.coerceNonNegativeInteger(data.dogCount, 0);
+        const totalNodes = this.coerceNonNegativeInteger(data.totalNodes, catCount + dogCount);
+        const activeNodes = this.coerceNonNegativeInteger(data.activeNodes, 0);
+        const gridWidth = this.coerceNonNegativeInteger(grid.width, 0);
+        const gridHeight = this.coerceNonNegativeInteger(grid.height, 0);
 
-        const summaryLines = [modeLabel, gridLine, populationLine, activityLine, lastUpdateLine];
+        const summaryLines = [
+            this.resolveModeLabel(data),
+            `Grid: ${gridWidth} × ${gridHeight}`,
+            `Population: ${catCount} cats / ${dogCount} dogs`,
+            this.resolveActivityLine(totalNodes, activeNodes),
+            this.resolveLastUpdateLine(data)
+        ];
 
         if (data.waitingForData && !this.isDemo) {
             summaryLines.push('Status: awaiting remote data');
         }
 
-        this.summaryText.setText(summaryLines.join('\n'));
+        const sanitizedLines = summaryLines.filter((line) => typeof line === 'string' && line.trim().length > 0);
+
+        if (sanitizedLines.length === 0) {
+            sanitizedLines.push('Status: unavailable');
+        }
+
+        this.summaryText.setText(sanitizedLines);
     }
 
     resolveModeLabel(data) {
@@ -371,6 +383,30 @@ export class SimulationStatusPanel {
         }
 
         this.positionContainer();
+    }
+
+    coerceNonNegativeInteger(value, fallback = 0) {
+        if (Number.isInteger(value)) {
+            return Math.max(0, value);
+        }
+
+        const parsed = Number.parseInt(value, 10);
+
+        if (!Number.isNaN(parsed)) {
+            return Math.max(0, parsed);
+        }
+
+        if (Number.isInteger(fallback)) {
+            return Math.max(0, fallback);
+        }
+
+        const fallbackParsed = Number.parseInt(fallback, 10);
+
+        if (!Number.isNaN(fallbackParsed)) {
+            return Math.max(0, fallbackParsed);
+        }
+
+        return 0;
     }
 }
 
