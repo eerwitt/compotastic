@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from dataclasses_json import dataclass_json
 
@@ -12,6 +12,7 @@ from .logic import Action
 from .logic import GridLocation
 from .logic import GridWorldEnvironment
 from .logic import MeshtasticNode
+from .logic import QLearningAgent
 from .logic import _ACTION_TO_VECTOR
 from .logic import _default_logger
 
@@ -106,6 +107,7 @@ class MeshSimulation:
         self._cat_idle_chance = 0.25
         self._dog_idle_chance = 0.45
         self._dog_move_interval = 3
+        self._models: Dict[str, QLearningAgent] = {}
 
         occupied: CoordinateSet = set()
         self._cats = self._spawn_agents(
@@ -138,6 +140,22 @@ class MeshSimulation:
         """Expose the underlying environment for reinforcement learning."""
 
         return self._environment
+
+    def set_models(self, models: Mapping[str, QLearningAgent]) -> None:
+        """Replace the registered Q-learning models for simulation nodes."""
+
+        validated: Dict[str, QLearningAgent] = {}
+        for identifier, model in models.items():
+            if not isinstance(identifier, str) or not identifier.strip():
+                raise ValueError("Model identifiers must be non-empty strings")
+            if not isinstance(model, QLearningAgent):
+                raise TypeError("Models must be provided as QLearningAgent instances")
+            validated[identifier] = model
+        self._models = validated
+        if validated:
+            self._log(
+                f"Registered {len(validated)} Q-learning model(s) for mesh simulation"
+            )
 
     def add_reward_tile(self, location: GridLocation, value: int) -> None:
         """Add or update a reward tile on the grid interior."""
@@ -284,9 +302,9 @@ class MeshSimulation:
         if not actions:
             return self._drain_battery(node)
 
-        self._rng.shuffle(actions)
+        ranked_actions = self._rank_actions(node, actions)
 
-        for action in actions:
+        for action in ranked_actions:
             try:
                 resolved_action = Action(int(action))
             except ValueError:
@@ -304,7 +322,72 @@ class MeshSimulation:
             _, candidate, _, _ = self._environment.step(node, int(action))
             return self._drain_battery(candidate)
 
-        return self._drain_battery(node)
+        return self._enter_stop_state(node, reason="No viable action from trained model")
+
+    def _rank_actions(
+        self,
+        node: MeshtasticNode,
+        available_actions: Sequence[int],
+    ) -> List[int]:
+        model = self._models.get(node.identifier)
+        if model is None:
+            self._log(
+                f"[mesh-warning] Node {node.identifier} lacks a trained model; broadcasting stop request"
+            )
+            self._broadcast_model_request(node)
+            return [int(Action.STOP)]
+
+        try:
+            state = self._environment.encode_state(node.location)
+        except ValueError:
+            self._log(
+                f"[mesh-warning] Unable to encode state for node {node.identifier}; requesting assistance"
+            )
+            self._broadcast_model_request(node)
+            return [int(Action.STOP)]
+
+        policy_action = model.policy(state)
+        if policy_action is None:
+            self._log(
+                f"[mesh-warning] Model for node {node.identifier} has no policy; requesting assistance"
+            )
+            self._broadcast_model_request(node)
+            return [int(Action.STOP)]
+
+        ranked = sorted(
+            (int(action) for action in available_actions),
+            key=lambda action: model.get_q_value(state, int(action)),
+            reverse=True,
+        )
+
+        preferred_action = int(policy_action)
+
+        if not ranked or preferred_action not in ranked:
+            self._log(
+                f"[mesh-warning] Model for node {node.identifier} proposed unavailable action; requesting assistance"
+            )
+            self._broadcast_model_request(node)
+            return [int(Action.STOP)]
+
+        ordered_actions = [preferred_action]
+        ordered_actions.extend(action for action in ranked if action != preferred_action)
+        return ordered_actions
+
+    def _enter_stop_state(
+        self,
+        node: MeshtasticNode,
+        *,
+        reason: str,
+    ) -> MeshtasticNode:
+        self._log(f"[mesh-warning] {reason} for node {node.identifier}")
+        self._broadcast_model_request(node)
+        _, halted_node, _, _ = self._environment.step(node, int(Action.STOP))
+        return self._drain_battery(halted_node)
+
+    def _broadcast_model_request(self, node: MeshtasticNode) -> None:
+        self._log(
+            f"Node {node.identifier} is requesting updated Q-learning model via mesh network"
+        )
 
     def _drain_battery(self, node: MeshtasticNode) -> MeshtasticNode:
         drain_amount = self._rng.uniform(0.05, 0.35)

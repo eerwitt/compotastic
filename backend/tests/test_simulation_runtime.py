@@ -6,7 +6,9 @@ import json
 
 from unittest.mock import patch
 
+from simulation.logic import Action
 from simulation.logic import GridLocation
+from simulation.logic import QLearningAgent
 from simulation.runtime import MeshSimulation
 
 
@@ -95,3 +97,77 @@ def test_move_node_skips_occupied_tiles_without_side_effects() -> None:
     assert (updated.location.x, updated.location.y) != (2, 1)
     env_state = simulation.environment._node_states[cat.identifier]
     assert env_state.location == updated.location
+
+
+def test_move_node_uses_registered_model_policy() -> None:
+    simulation = MeshSimulation(width=5, height=5, cat_count=1, dog_count=0, random_seed=11)
+
+    cat = simulation.snapshot().cats[0].with_location(GridLocation(2, 2))
+    simulation._cats = [cat]
+    simulation.environment._node_states[cat.identifier] = cat
+
+    agent = QLearningAgent(exploration_rate=0.0)
+    state = simulation.environment.encode_state(cat.location)
+    agent.learn(
+        state,
+        int(Action.MOVE_RIGHT),
+        reward=1.0,
+        next_state=state,
+        next_available_actions=[int(Action.MOVE_RIGHT)],
+    )
+
+    simulation.set_models({cat.identifier: agent})
+
+    class PredictableRandom:
+        def random(self) -> float:
+            return 0.99
+
+        def uniform(self, start: float, end: float) -> float:
+            return start
+
+        def randrange(self, upper: int) -> int:
+            return 0
+
+    simulation._rng = PredictableRandom()
+
+    updated = simulation._move_node(cat, set(), idle_probability=0.0)
+
+    assert updated.location.x == cat.location.x + 1
+    assert updated.location.y == cat.location.y
+
+
+def test_move_node_requests_model_when_untrained() -> None:
+    simulation = MeshSimulation(width=5, height=5, cat_count=1, dog_count=0, random_seed=13)
+
+    cat = simulation.snapshot().cats[0].with_location(GridLocation(2, 2))
+    simulation._cats = [cat]
+    simulation.environment._node_states[cat.identifier] = cat
+
+    messages = []
+
+    def capture(message: str) -> None:
+        messages.append(message)
+
+    simulation._log = capture
+
+    class PredictableRandom:
+        def random(self) -> float:
+            return 0.99
+
+        def uniform(self, start: float, end: float) -> float:
+            return start
+
+        def randrange(self, upper: int) -> int:
+            return 0
+
+    simulation._rng = PredictableRandom()
+
+    with patch.object(simulation._environment, "step", wraps=simulation._environment.step) as step_spy:
+        updated = simulation._move_node(cat, set(), idle_probability=0.0)
+
+    assert step_spy.call_count == 1
+    _, action = step_spy.call_args[0][0:2]
+    assert action == int(Action.STOP)
+    assert updated.location == cat.location
+    assert any("lacks a trained model" in message for message in messages)
+    assert any("requesting updated Q-learning model" in message for message in messages)
