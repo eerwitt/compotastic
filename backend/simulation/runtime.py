@@ -44,7 +44,10 @@ class MeshSimulation:
 
     _BORDER_COLOR_CODE = "\x1b[38;5;94m"
     _COLOR_RESET_CODE = "\x1b[0m"
-    _BORDER_SYMBOL = "▓"
+    _FENCE_CORNER_SYMBOL = "+"
+    _FENCE_HORIZONTAL_RAIL_SYMBOL = "="
+    _FENCE_POST_SYMBOL = "|"
+    _FENCE_POST_INTERVAL = 2
     _CAT_SYMBOL = "C"
     _DOG_SYMBOL = "D"
     _EMPTY_SYMBOL = "·"
@@ -256,18 +259,37 @@ class MeshSimulation:
             or y == self._grid.height - 1
         )
 
-    def _border_cell(self) -> str:
-        return f"{self._BORDER_COLOR_CODE}{self._BORDER_SYMBOL}{self._COLOR_RESET_CODE}"
+    def _border_cell(self, x: int, y: int) -> str:
+        """Return a colored fence glyph for the given border coordinate."""
+
+        if (x == 0 or x == self._grid.width - 1) and (
+            y == 0 or y == self._grid.height - 1
+        ):
+            symbol = self._FENCE_CORNER_SYMBOL
+        elif y == 0 or y == self._grid.height - 1:
+            if x % self._FENCE_POST_INTERVAL == 0:
+                symbol = self._FENCE_CORNER_SYMBOL
+            else:
+                symbol = self._FENCE_HORIZONTAL_RAIL_SYMBOL
+        elif x == 0 or x == self._grid.width - 1:
+            if y % self._FENCE_POST_INTERVAL == 0:
+                symbol = self._FENCE_CORNER_SYMBOL
+            else:
+                symbol = self._FENCE_POST_SYMBOL
+        else:
+            symbol = self._FENCE_HORIZONTAL_RAIL_SYMBOL
+
+        return f"{self._BORDER_COLOR_CODE}{symbol}{self._COLOR_RESET_CODE}"
 
     def _build_ascii_map(self) -> List[str]:
-        """Construct an ASCII representation of the grid with a brown border."""
+        """Construct an ASCII representation of the grid with a brown fence border."""
 
         rows: List[List[str]] = []
         for y in range(self._grid.height):
             row: List[str] = []
             for x in range(self._grid.width):
                 if self._is_border(x, y):
-                    row.append(self._border_cell())
+                    row.append(self._border_cell(x, y))
                 else:
                     row.append(self._EMPTY_SYMBOL)
             rows.append(row)
