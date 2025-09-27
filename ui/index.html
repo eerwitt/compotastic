@@ -10,8 +10,38 @@
 
 <body>
     <div id="app">
+        <aside id="info-panel" class="info-panel" aria-label="Project information">
+            <div class="info-header">
+                <h1>Project Guide 🚀</h1>
+                <button id="info-toggle" type="button" aria-controls="panel-content" aria-expanded="true">
+                    Hide guide 🙈
+                </button>
+            </div>
+            <div id="panel-content" class="info-content">
+                <p>Welcome to the Phaser-powered playground! 🎮 This demo boots up a lightweight scene so you can explore how our Unity-integrated web view talks to Phaser.</p>
+                <p>Here is what happens behind the scenes:</p>
+                <ul>
+                    <li>🧩 The Vite entry point loads Phaser and our custom scenes.</li>
+                    <li>⚙️ Configuration files wire up asset loading and input handling.</li>
+                    <li>🔄 Unity uses this build as an embedded web surface for rapid iteration.</li>
+                </ul>
+                <p>Need a refresher? Click the toggle again to bring this helper back. Happy tinkering! ✨</p>
+            </div>
+        </aside>
         <div id="game-container"></div>
     </div>
     <script type="module" src="src/main.js"></script>
+    <script>
+        const infoPanel = document.getElementById('info-panel');
+        const infoToggle = document.getElementById('info-toggle');
+
+        if (infoPanel && infoToggle) {
+            infoToggle.addEventListener('click', () => {
+                const collapsed = infoPanel.classList.toggle('collapsed');
+                infoToggle.setAttribute('aria-expanded', (!collapsed).toString());
+                infoToggle.textContent = collapsed ? 'Show guide 📘' : 'Hide guide 🙈';
+            });
+        }
+    </script>
 </body>
 </html>
