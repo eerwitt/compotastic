@@ -1,184 +1,62 @@
 import Phaser, { Scene } from 'phaser';
 
-const CELL_SIZE = 16;
-const GRID_WIDTH = 40;
-const GRID_HEIGHT = 30;
+const DEFAULT_CAT_COUNT = 10;
+const CAT_ASCII = '=^.^=';
+const CAT_FONT_STYLE = { fontFamily: 'Courier', fontSize: 32, color: '#000000' };
+const CAT_SPEED_RANGE = { min: 40, max: 140 };
+const LOOK_INTERVAL_RANGE = { min: 800, max: 2200 };
 
-const UP = 0;
-const DOWN = 1;
-const LEFT = 2;
-const RIGHT = 3;
-
-class Food extends Phaser.GameObjects.Image
-{
-    constructor (scene, x, y)
-    {
-        super(scene, x * CELL_SIZE, y * CELL_SIZE, 'food');
-
-        this.setOrigin(0);
-
-        this.total = 0;
-
-        scene.add.existing(this);
-    }
-
-    eat ()
-    {
-        this.total++;
-    }
-}
-
-class Snake
+class Cat
 {
     constructor (scene, x, y)
     {
         this.scene = scene;
-        this.headPosition = new Phaser.Geom.Point(x, y);
+        this.text = scene.add.text(x, y, CAT_ASCII, CAT_FONT_STYLE);
+        this.text.setOrigin(0, 0);
 
-        this.body = scene.add.group();
+        scene.physics.add.existing(this.text);
 
-        this.head = this.body.create(x * CELL_SIZE, y * CELL_SIZE, 'body');
-        this.head.setOrigin(0);
+        this.body = this.text.body;
 
-        this.alive = true;
+        this.body.setAllowGravity(false);
+        this.body.setCollideWorldBounds(true);
+        this.body.setBounce(1, 1);
+        this.body.setImmovable(false);
 
-        this.speed = 100;
+        this.body.setSize(this.text.width, this.text.height);
 
-        this.moveTime = 0;
+        this.nextLookTime = scene.time.now || 0;
+    }
 
-        this.tail = new Phaser.Geom.Point(x, y);
+    setPosition (x, y)
+    {
+        this.text.setPosition(x, y);
 
-        this.heading = RIGHT;
-        this.direction = RIGHT;
+        if (this.body)
+        {
+            this.body.reset(x, y);
+        }
+    }
+
+    lookAround (time)
+    {
+        const speed = Phaser.Math.Between(CAT_SPEED_RANGE.min, CAT_SPEED_RANGE.max);
+        const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+
+        const velocityX = Math.cos(angle) * speed;
+        const velocityY = Math.sin(angle) * speed;
+
+        this.body.setVelocity(velocityX, velocityY);
+
+        this.nextLookTime = time + Phaser.Math.Between(LOOK_INTERVAL_RANGE.min, LOOK_INTERVAL_RANGE.max);
     }
 
     update (time)
     {
-        if (time >= this.moveTime)
+        if (time >= this.nextLookTime)
         {
-            return this.move(time);
+            this.lookAround(time);
         }
-
-        return true;
-    }
-
-    faceLeft ()
-    {
-        if (this.direction === UP || this.direction === DOWN)
-        {
-            this.heading = LEFT;
-        }
-    }
-
-    faceRight ()
-    {
-        if (this.direction === UP || this.direction === DOWN)
-        {
-            this.heading = RIGHT;
-        }
-    }
-
-    faceUp ()
-    {
-        if (this.direction === LEFT || this.direction === RIGHT)
-        {
-            this.heading = UP;
-        }
-    }
-
-    faceDown ()
-    {
-        if (this.direction === LEFT || this.direction === RIGHT)
-        {
-            this.heading = DOWN;
-        }
-    }
-
-    move (time)
-    {
-        switch (this.heading)
-        {
-            case LEFT:
-                this.headPosition.x = Phaser.Math.Wrap(this.headPosition.x - 1, 0, GRID_WIDTH);
-                break;
-
-            case RIGHT:
-                this.headPosition.x = Phaser.Math.Wrap(this.headPosition.x + 1, 0, GRID_WIDTH);
-                break;
-
-            case UP:
-                this.headPosition.y = Phaser.Math.Wrap(this.headPosition.y - 1, 0, GRID_HEIGHT);
-                break;
-
-            case DOWN:
-                this.headPosition.y = Phaser.Math.Wrap(this.headPosition.y + 1, 0, GRID_HEIGHT);
-                break;
-
-            default:
-                break;
-        }
-
-        this.direction = this.heading;
-
-        Phaser.Actions.ShiftPosition(
-            this.body.getChildren(),
-            this.headPosition.x * CELL_SIZE,
-            this.headPosition.y * CELL_SIZE,
-            1,
-            this.tail
-        );
-
-        const hitBody = Phaser.Actions.GetFirst(this.body.getChildren(), { x: this.head.x, y: this.head.y }, 1);
-
-        if (hitBody)
-        {
-            this.alive = false;
-
-            return false;
-        }
-
-        this.moveTime = time + this.speed;
-
-        return true;
-    }
-
-    grow ()
-    {
-        const newPart = this.body.create(this.tail.x, this.tail.y, 'body');
-
-        newPart.setOrigin(0);
-    }
-
-    collideWithFood (food)
-    {
-        if (this.head.x === food.x && this.head.y === food.y)
-        {
-            this.grow();
-
-            food.eat();
-
-            if (this.speed > 20 && food.total % 5 === 0)
-            {
-                this.speed -= 5;
-            }
-
-            return true;
-        }
-
-        return false;
-    }
-
-    updateGrid (grid)
-    {
-        this.body.children.each((segment) =>
-        {
-            const bx = segment.x / CELL_SIZE;
-            const by = segment.y / CELL_SIZE;
-
-            grid[by][bx] = false;
-        });
-
-        return grid;
     }
 }
 
@@ -188,127 +66,39 @@ export class ClickerGame extends Scene
     {
         super('ClickerGame');
 
-        this.gameOverHandled = false;
+        this.cats = [];
     }
 
     preload ()
     {
-        this.load.setBaseURL('https://cdn.phaserfiles.com/v385');
-        this.load.image('food', 'assets/games/snake/food.png');
-        this.load.image('body', 'assets/games/snake/body.png');
+        //  No external assets required for the ASCII cats.
     }
 
     create ()
     {
         this.cameras.main.setBackgroundColor('#bfcc00');
 
-        this.food = new Food(this, 3, 4);
+        this.catsGroup = this.physics.add.group();
 
-        this.snake = new Snake(this, 8, 8);
+        for (let i = 0; i < DEFAULT_CAT_COUNT; i++)
+        {
+            const cat = new Cat(this, 0, 0);
 
-        this.cursors = this.input.keyboard.createCursorKeys();
+            const x = Phaser.Math.Between(0, Math.max(0, this.scale.width - cat.body.width));
+            const y = Phaser.Math.Between(0, Math.max(0, this.scale.height - cat.body.height));
 
-        this.gameOverHandled = false;
+            cat.setPosition(x, y);
+            cat.lookAround(this.time.now || 0);
+
+            this.catsGroup.add(cat.text);
+            this.cats.push(cat);
+        }
+
+        this.physics.add.collider(this.catsGroup, this.catsGroup);
     }
 
     update (time)
     {
-        if (!this.snake.alive)
-        {
-            if (!this.gameOverHandled)
-            {
-                this.handleGameOver();
-            }
-
-            return;
-        }
-
-        if (this.cursors.left.isDown)
-        {
-            this.snake.faceLeft();
-        }
-        else if (this.cursors.right.isDown)
-        {
-            this.snake.faceRight();
-        }
-        else if (this.cursors.up.isDown)
-        {
-            this.snake.faceUp();
-        }
-        else if (this.cursors.down.isDown)
-        {
-            this.snake.faceDown();
-        }
-
-        if (this.snake.update(time) && this.snake.collideWithFood(this.food))
-        {
-            if (!this.repositionFood())
-            {
-                this.handleGameOver();
-            }
-        }
-    }
-
-    repositionFood ()
-    {
-        const testGrid = [];
-
-        for (let y = 0; y < GRID_HEIGHT; y++)
-        {
-            testGrid[y] = [];
-
-            for (let x = 0; x < GRID_WIDTH; x++)
-            {
-                testGrid[y][x] = true;
-            }
-        }
-
-        this.snake.updateGrid(testGrid);
-
-        const validLocations = [];
-
-        for (let y = 0; y < GRID_HEIGHT; y++)
-        {
-            for (let x = 0; x < GRID_WIDTH; x++)
-            {
-                if (testGrid[y][x])
-                {
-                    validLocations.push({ x, y });
-                }
-            }
-        }
-
-        if (validLocations.length > 0)
-        {
-            const pos = Phaser.Math.RND.pick(validLocations);
-
-            this.food.setPosition(pos.x * CELL_SIZE, pos.y * CELL_SIZE);
-
-            return true;
-        }
-
-        return false;
-    }
-
-    handleGameOver ()
-    {
-        this.gameOverHandled = true;
-
-        const totalFood = this.food.total;
-        const highscore = this.registry.get('highscore');
-
-        if (typeof highscore === 'number')
-        {
-            if (totalFood > highscore)
-            {
-                this.registry.set('highscore', totalFood);
-            }
-        }
-        else
-        {
-            this.registry.set('highscore', totalFood);
-        }
-
-        this.time.delayedCall(1000, () => this.scene.start('GameOver'));
+        this.cats.forEach((cat) => cat.update(time));
     }
 }
