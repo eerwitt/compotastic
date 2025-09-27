@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package compotastic.mesh;
+
+option csharp_namespace = "Compotastic.Mesh";
+option go_package = "github.com/compotastic/protos/mesh";
+option java_multiple_files = true;
+option java_package = "ai.compotastic.mesh";
+option objc_class_prefix = "CMX";
+option swift_prefix = "CMX";
+
+// The Meshtastic python package distributes mesh.proto alongside its generated
+// classes. Importing it here keeps the compiler aware of MeshPacket and other
+// core types when we extend the data payload with application specific frames.
+import "meshtastic/mesh.proto";
+
+// AddressableMeshData wraps the Meshtastic MeshPacket data field so that the
+// library can identify which cooperating node should process an application
+// level payload.
+message AddressableMeshData {
+  // Protocol version for this wrapper so receivers can evolve independently
+  // from the underlying Meshtastic firmware version.
+  uint32 protocol_version = 1;
+
+  // Application identifier differentiating Compotastic payloads from other
+  // custom data consumers. The value is opaque to Meshtastic itself but allows
+  // upstream routing logic to select the correct decoder.
+  uint32 application_id = 2;
+
+  // Compact 24-bit addresses for routing across the mesh. Values above
+  // 0x00FF_FFFF are reserved for future extensions. A destination of zero
+  // indicates broadcast delivery to any interested node.
+  uint32 source_address = 3;
+  uint32 destination_address = 4;
+
+  // Sequence number used for de-duplication when retransmissions occur.
+  uint32 sequence_id = 5;
+
+  oneof payload {
+    StateUpdate state_update = 16;
+  }
+}
+
+// StateUpdate represents a single reinforcement learning transition emitted by
+// the simulation code in backend/simulation/logic. The structure mirrors the
+// tuple returned by GridWorldEnvironment.step while packing the grid location,
+// action, completion flag, and reward into a single 32-bit field to minimise
+// airtime.
+message StateUpdate {
+  // Packed layout (least significant bit first):
+  //   bits 00-09 -> X coordinate (0-1023)
+  //   bits 10-19 -> Y coordinate (0-1023)
+  //   bits 20-22 -> Action value (simulation.logic.Action enum)
+  //   bit  23    -> Done flag from GridWorldEnvironment.step
+  //   bits 24-31 -> Signed reward in two's complement (-128..127)
+  fixed32 packed_transition = 1;
+
+  // Encoded state identifiers use the NodeState.encode() helper from the
+  // simulation. These values allow learners to reconstruct Q-table updates.
+  uint32 prior_state_id = 2;
+  uint32 next_state_id = 3;
+}
