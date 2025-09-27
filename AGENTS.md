@@ -3,11 +3,11 @@
 ## Build & Packaging
 
 - Always create isolated Python environments targeting **Python 3.12** before installing dependencies.
-- Install runtime and build dependencies with `pip install -r requirements.txt`.
+- Install runtime and build dependencies for the backend with `pip install -r requirements.txt`.
 
 ## Testing
 
-- Run the unit test suite with `python -m unittest discover -s backend/tests -p "test_*.py"`.
+- Run the unit test suite from the `backend` directory with `python -m unittest discover -s tests -p "test_*.py"`.
 - Add new tests alongside implementation changes whenever possible to keep coverage healthy.
 - Tests may import helpers from `simulation.logic` to validate simulation logic.
 

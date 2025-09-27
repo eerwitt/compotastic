@@ -208,3 +208,6 @@ __marimo__/
 
 # Project specific ignores
 simulation/build
+
+ui/node_modules/
+ui/dist/
