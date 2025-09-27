@@ -1,6 +1,6 @@
 # Simulation UI
 
-This web based UI uses Phaser.js <https://github.com/phaserjs/phaser> v3.90.0 to display the simulation logic which is synchronized with the backend via a websockets connection.
+This web based UI uses Phaser.js <https://github.com/phaserjs/phaser> v3.90.0 to display the simulation logic which is synchronized with the backend via a websockets connection. By default the client connects to `ws://localhost:8000`, but you can override this during build time by setting the `VITE_WS_URL` environment variable.
 
 ## Instructions
 

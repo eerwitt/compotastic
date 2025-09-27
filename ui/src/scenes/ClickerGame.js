@@ -1,10 +1,13 @@
 import { Scene } from 'phaser';
+import { getWebSocketUrl } from '../config';
 
 export class ClickerGame extends Scene
 {
     constructor ()
     {
         super('ClickerGame');
+
+        this.initialCoinCount = 32;
     }
 
     create ()
@@ -13,6 +16,9 @@ export class ClickerGame extends Scene
 
         this.coins = [];
 
+        this.socket = null;
+        this.timer = null;
+
         const textStyle = { fontFamily: 'Arial Black', fontSize: 38, color: '#ffffff', stroke: '#000000', strokeThickness: 8 };
 
         this.add.image(512, 384, 'background');
@@ -20,17 +26,78 @@ export class ClickerGame extends Scene
         this.scoreText = this.add.text(32, 32, 'Coins: 0', textStyle).setDepth(1);
         this.timeText = this.add.text(1024 - 32, 32, 'Time: 10', textStyle).setOrigin(1, 0).setDepth(1);
 
-        //  Our 10 second timer. It starts automatically when the scene is created.
-        this.timer = this.time.addEvent({ delay: 10000, callback: () => this.gameOver() });
-
         this.physics.world.setBounds(0, -400, 1024, 768 + 310);
 
-        for (let i = 0; i < 32; i++)
+        this.input.on('gameobjectdown', (pointer, gameObject) => this.clickCoin(gameObject));
+
+        this.events.once('shutdown', () => this.closeSocket());
+        this.events.once('destroy', () => this.closeSocket());
+
+        this.connectToApi();
+    }
+
+    connectToApi ()
+    {
+        const url = getWebSocketUrl();
+
+        let socket;
+
+        try
+        {
+            socket = new WebSocket(url);
+        }
+        catch (error)
+        {
+            console.error('Failed to initialise the WebSocket connection.', error);
+            return;
+        }
+
+        this.socket = socket;
+
+        socket.addEventListener('open', () =>
+        {
+            console.info(`Connected to WebSocket at ${url}`);
+            this.startGame();
+        });
+
+        socket.addEventListener('close', (event) =>
+        {
+            console.info('WebSocket connection closed.', event);
+        });
+
+        socket.addEventListener('error', (event) =>
+        {
+            console.error('WebSocket error encountered.', event);
+        });
+    }
+
+    startGame ()
+    {
+        this.startTimer();
+
+        for (let i = 0; i < this.initialCoinCount; i++)
         {
             this.dropCoin();
         }
+    }
 
-        this.input.on('gameobjectdown', (pointer, gameObject) => this.clickCoin(gameObject));
+    startTimer ()
+    {
+        if (this.timer)
+        {
+            this.timer.remove();
+        }
+
+        this.timer = this.time.addEvent({ delay: 10000, callback: () => this.gameOver() });
+    }
+
+    closeSocket ()
+    {
+        if (this.socket)
+        {
+            this.socket.close();
+            this.socket = null;
+        }
     }
 
     dropCoin ()
@@ -73,7 +140,10 @@ export class ClickerGame extends Scene
 
     update ()
     {
-        this.timeText.setText('Time: ' + Math.ceil(this.timer.getRemainingSeconds()));
+        if (this.timer)
+        {
+            this.timeText.setText('Time: ' + Math.ceil(this.timer.getRemainingSeconds()));
+        }
     }
 
     gameOver ()
