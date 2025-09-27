@@ -210,7 +210,10 @@ class OpenAIImageProcessingService:
                     "role": "user",
                     "content": [
                         {"type": "input_text", "text": prompt},
-                        {"type": "input_image", "image_id": upload.id},
+                        {
+                            "type": "input_image",
+                            "image_file": {"file_id": upload.id},
+                        },
                     ],
                 }
             ],
