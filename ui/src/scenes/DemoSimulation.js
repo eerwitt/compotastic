@@ -4,9 +4,24 @@ const DEMO_GRID_SIZE = { width: 25, height: 25 };
 const DEFAULT_DEMO_STATE = Object.freeze({
     grid: { ...DEMO_GRID_SIZE },
     cats: [
-        { identifier: 'demo-cat-alpha', tileX: 6, tileY: 6, attributes: { cpu: '68000 8MHz', ram: '512KB' } },
-        { identifier: 'demo-cat-bravo', tileX: 18, tileY: 6, attributes: { cpu: 'Pentium 100MHz', ram: '16MB' } },
-        { identifier: 'demo-cat-charlie', tileX: 6, tileY: 18, attributes: { cpu: 'Core 2 Duo 2.0GHz', ram: '2GB' } },
+        {
+            identifier: 'demo-cat-alpha',
+            tileX: 6,
+            tileY: 6,
+            attributes: { cpu: '68000 8MHz', ram: '512KB', alert: 'Link down on sector 3', needs: 'Fiber patch' }
+        },
+        {
+            identifier: 'demo-cat-bravo',
+            tileX: 18,
+            tileY: 6,
+            attributes: { cpu: 'Pentium 100MHz', ram: '16MB' }
+        },
+        {
+            identifier: 'demo-cat-charlie',
+            tileX: 6,
+            tileY: 18,
+            attributes: { cpu: 'Core 2 Duo 2.0GHz', ram: '2GB', alert: 'Thermal warning', needs: ['Cooling fan', 'Airflow check'] }
+        },
         { identifier: 'demo-cat-delta', tileX: 18, tileY: 18, attributes: { cpu: 'ARM Cortex-A9 1GHz', ram: '1GB' } },
         { identifier: 'demo-cat-epsilon', tileX: 12, tileY: 12, attributes: { cpu: 'Xeon 2.4GHz', ram: '8GB' } }
     ],
