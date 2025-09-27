@@ -376,7 +376,7 @@ class MeshSimulation:
                 f"[mesh-warning] Node {node.identifier} lacks a trained model; broadcasting stop request"
             )
             self._broadcast_model_request(node)
-            return [int(Action.STOP)] if allow_stop else []
+            return self._fallback_actions(available_actions, allow_stop=allow_stop)
 
         try:
             state = self._environment.encode_state(node.location)
@@ -385,7 +385,7 @@ class MeshSimulation:
                 f"[mesh-warning] Unable to encode state for node {node.identifier}; requesting assistance"
             )
             self._broadcast_model_request(node)
-            return [int(Action.STOP)] if allow_stop else []
+            return self._fallback_actions(available_actions, allow_stop=allow_stop)
 
         policy_action = model.policy(state)
         if policy_action is None:
@@ -393,7 +393,7 @@ class MeshSimulation:
                 f"[mesh-warning] Model for node {node.identifier} has no policy; requesting assistance"
             )
             self._broadcast_model_request(node)
-            return [int(Action.STOP)] if allow_stop else []
+            return self._fallback_actions(available_actions, allow_stop=allow_stop)
 
         ranked = sorted(
             filtered_actions if filtered_actions else [int(action) for action in available_actions],
@@ -413,11 +413,44 @@ class MeshSimulation:
                 f"[mesh-warning] Model for node {node.identifier} proposed unavailable action; requesting assistance"
             )
             self._broadcast_model_request(node)
-            return [int(Action.STOP)] if allow_stop else []
+            return self._fallback_actions(available_actions, allow_stop=allow_stop)
 
         ordered_actions = [preferred_action]
         ordered_actions.extend(action for action in ranked if action != preferred_action)
         return ordered_actions
+
+    def _fallback_actions(
+        self,
+        available_actions: Sequence[int],
+        *,
+        allow_stop: bool,
+    ) -> List[int]:
+        actions = [int(action) for action in available_actions]
+        if not allow_stop:
+            actions = [action for action in actions if action != int(Action.STOP)]
+        if not actions:
+            return []
+
+        movement_codes = {int(action) for action in _ACTION_TO_VECTOR}
+        movement_actions = [
+            action for action in actions if action in movement_codes
+        ]
+        self._rng.shuffle(movement_actions)
+
+        non_movement_actions = [
+            action
+            for action in actions
+            if action not in movement_codes and action != int(Action.STOP)
+        ]
+
+        ordered: List[int] = []
+        ordered.extend(movement_actions)
+        ordered.extend(non_movement_actions)
+
+        if allow_stop and int(Action.STOP) in actions:
+            ordered.append(int(Action.STOP))
+
+        return ordered
 
     def _fallback_cat_action(
         self,

@@ -54,6 +54,22 @@ def test_agents_remain_within_grid_bounds() -> None:
         assert 0 < dog.location.y < 3
 
 
+def test_dog_without_model_eventually_moves() -> None:
+    simulation = MeshSimulation(width=5, height=5, cat_count=0, dog_count=1, random_seed=7)
+
+    initial = simulation.snapshot().dogs[0].location
+
+    moved = False
+    for _ in range(10):
+        snapshot = simulation.step()
+        current = snapshot.dogs[0].location
+        if current != initial:
+            moved = True
+            break
+
+    assert moved, "Dog should explore the grid even without a trained model"
+
+
 def test_add_reward_tile_updates_environment() -> None:
     simulation = MeshSimulation(width=5, height=5, cat_count=0, dog_count=0, random_seed=3)
 
