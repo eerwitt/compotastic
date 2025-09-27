@@ -52,7 +52,7 @@ export class Preloader extends Scene {
 
         this.scene.transition({
             target: 'Simulation',
-            duration: 1000,
+            duration: 10,
             moveBelow: true,
             onUpdate: (progress) => {
                 this.cameras.main.setAlpha(1 - progress);
