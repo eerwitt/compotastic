@@ -34,12 +34,20 @@ class SimulationSnapshot:
     grid: SimulationGrid
     cats: List[MeshtasticNode]
     dogs: List[MeshtasticNode]
+    ascii_map: List[str]
 
 
 class MeshSimulation:
     """Lightweight runtime that coordinates cats and dogs on a grid."""
 
     update_interval_seconds: float = 0.75
+
+    _BORDER_COLOR_CODE = "\x1b[38;5;94m"
+    _COLOR_RESET_CODE = "\x1b[0m"
+    _BORDER_SYMBOL = "▓"
+    _CAT_SYMBOL = "C"
+    _DOG_SYMBOL = "D"
+    _EMPTY_SYMBOL = "·"
 
     def __init__(
         self,
@@ -55,6 +63,8 @@ class MeshSimulation:
             raise ValueError("width must be a positive integer")
         if not isinstance(height, int) or height <= 0:
             raise ValueError("height must be a positive integer")
+        if width < 3 or height < 3:
+            raise ValueError("Grid dimensions must be at least 3x3 to accommodate the border")
         if not isinstance(cat_count, int) or cat_count < 0:
             raise ValueError("cat_count must be a non-negative integer")
         if not isinstance(dog_count, int) or dog_count < 0:
@@ -98,6 +108,7 @@ class MeshSimulation:
             grid=self._grid,
             cats=list(self._cats),
             dogs=list(self._dogs),
+            ascii_map=self._build_ascii_map(),
         )
 
     def step(self) -> SimulationSnapshot:
@@ -164,18 +175,20 @@ class MeshSimulation:
 
     def _random_location(self, occupied: CoordinateSet) -> GridLocation:
         attempts = 0
-        limit = max(1, self._grid.width * self._grid.height * 2)
+        interior_width = self._grid.width - 2
+        interior_height = self._grid.height - 2
+        limit = max(1, interior_width * interior_height * 2)
         while attempts < limit:
             attempts += 1
             candidate = GridLocation(
-                self._rng.randrange(self._grid.width),
-                self._rng.randrange(self._grid.height),
+                1 + self._rng.randrange(interior_width),
+                1 + self._rng.randrange(interior_height),
             )
             if (candidate.x, candidate.y) not in occupied:
                 return candidate
 
-        for y in range(self._grid.height):
-            for x in range(self._grid.width):
+        for y in range(1, self._grid.height - 1):
+            for x in range(1, self._grid.width - 1):
                 if (x, y) not in occupied:
                     return GridLocation(x, y)
 
@@ -234,6 +247,37 @@ class MeshSimulation:
         drain_amount = self._rng.uniform(0.05, 0.35)
         new_level = max(node.battery_level - drain_amount, 0.0)
         return node.with_battery_level(round(new_level, 2))
+
+    def _is_border(self, x: int, y: int) -> bool:
+        return (
+            x == 0
+            or y == 0
+            or x == self._grid.width - 1
+            or y == self._grid.height - 1
+        )
+
+    def _border_cell(self) -> str:
+        return f"{self._BORDER_COLOR_CODE}{self._BORDER_SYMBOL}{self._COLOR_RESET_CODE}"
+
+    def _build_ascii_map(self) -> List[str]:
+        """Construct an ASCII representation of the grid with a brown border."""
+
+        rows: List[List[str]] = []
+        for y in range(self._grid.height):
+            row: List[str] = []
+            for x in range(self._grid.width):
+                if self._is_border(x, y):
+                    row.append(self._border_cell())
+                else:
+                    row.append(self._EMPTY_SYMBOL)
+            rows.append(row)
+
+        for cat in self._cats:
+            rows[cat.location.y][cat.location.x] = self._CAT_SYMBOL
+        for dog in self._dogs:
+            rows[dog.location.y][dog.location.x] = self._DOG_SYMBOL
+
+        return [" ".join(row) for row in rows]
 
 
 __all__ = [

@@ -61,27 +61,27 @@ class GridWorldEnvironmentTests(unittest.TestCase):
     """Validate grid transitions and reward propagation."""
 
     def test_step_moves_node_and_returns_reward(self) -> None:
-        env = GridWorldEnvironment(width=3, height=3, rewards={(1, 0): 5, (1, 1): 2})
+        env = GridWorldEnvironment(width=5, height=5, rewards={(2, 1): 5, (2, 2): 2})
         node = MeshtasticNode(
             identifier="node-1",
             battery_level=75.0,
             compute_efficiency_flops_per_milliamp=10.0,
-            location=GridLocation(1, 1),
+            location=GridLocation(2, 2),
         )
         state_id = env.encode_state(node.location)
         next_state, updated_node, reward, done = env.step(node, int(Action.MOVE_FORWARD))
         self.assertFalse(done)
-        self.assertEqual(updated_node.location, GridLocation(1, 0))
+        self.assertEqual(updated_node.location, GridLocation(2, 1))
         self.assertEqual(reward, 5)
         self.assertNotEqual(state_id, next_state)
 
     def test_unavailable_action_penalizes_agent(self) -> None:
-        env = GridWorldEnvironment(width=2, height=2)
+        env = GridWorldEnvironment(width=4, height=4)
         node = MeshtasticNode(
             identifier="node-edge",
             battery_level=60.0,
             compute_efficiency_flops_per_milliamp=8.0,
-            location=GridLocation(0, 0),
+            location=GridLocation(1, 1),
         )
         state_id, updated_node, reward, done = env.step(node, int(Action.MOVE_FORWARD))
         self.assertEqual(state_id, env.encode_state(node.location))

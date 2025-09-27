@@ -246,16 +246,31 @@ class GridWorldEnvironment:
     def _within_bounds(self, location: GridLocation) -> bool:
         return 0 <= location.x < self.width and 0 <= location.y < self.height
 
+    def _is_border(self, location: GridLocation) -> bool:
+        return (
+            location.x == 0
+            or location.y == 0
+            or location.x == self.width - 1
+            or location.y == self.height - 1
+        )
+
+    def is_passable(self, location: GridLocation) -> bool:
+        """Return True when the location is within the traversable interior."""
+
+        return self._within_bounds(location) and not self._is_border(location)
+
     def surroundings_for(self, location: GridLocation) -> Surroundings:
         """Return the available actions for a node at the supplied location."""
 
         if not self._within_bounds(location):
             raise ValueError("location must be within the grid bounds")
+        if self._is_border(location):
+            raise ValueError("location must not be on the impassable border")
         return Surroundings(
-            can_move_forward=location.y > 0,
-            can_move_backward=location.y < self.height - 1,
-            can_move_left=location.x > 0,
-            can_move_right=location.x < self.width - 1,
+            can_move_forward=self.is_passable(location.translated(0, -1)),
+            can_move_backward=self.is_passable(location.translated(0, 1)),
+            can_move_left=self.is_passable(location.translated(-1, 0)),
+            can_move_right=self.is_passable(location.translated(1, 0)),
             can_do_work=True,
             can_stop=True,
             can_call_for_help=True,
@@ -297,6 +312,11 @@ class GridWorldEnvironment:
         if resolved_action in _ACTION_TO_VECTOR:
             dx, dy = _ACTION_TO_VECTOR[resolved_action]
             new_location = node.location.translated(dx, dy)
+            if not self.is_passable(new_location):
+                self._log(
+                    "Attempted to move into impassable border at %s", new_location
+                )
+                return self.encode_state(node.location), node, -1, False
             reward = self.reward_at(new_location)
             updated_node = node.with_location(new_location)
             return self.encode_state(new_location), updated_node, reward, False
