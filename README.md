@@ -50,6 +50,33 @@ Refer to the `simulation/` directory for implementation examples and sample trac
    - Use the provided simulation scripts to emulate mesh traffic and job negotiation without hardware.
    - Adjust latency, bandwidth, and node availability parameters to validate resilience in different environments (urban canyons, disaster zones, etc.).
 
+## Development Environment
+
+Compotastic's Python components target **Python 3.11**. Use the provided `requirements.txt` to install the base dependencies required for the Arcade-powered simulation prototype and its browser build pipeline.
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+## Building the Arcade Web Demo
+
+An example Arcade scene is available under `examples/arcade_web/`. You can run it on the desktop with:
+
+```bash
+python examples/arcade_web/main.py
+```
+
+To generate a browser-ready build using [pygbag](https://github.com/pygame-web/pygbag), run:
+
+```bash
+pygbag --build examples/arcade_web/main.py
+```
+
+The command outputs an HTML bundle in `build/web/` that can be served with any static web host.
+
 ## Future Enhancements
 - Adaptive prioritization of compute requests based on mission profiles (search & rescue, environmental monitoring).
 - Integration with satellite backhaul for long-range coordination.
