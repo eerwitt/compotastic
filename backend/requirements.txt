@@ -1,7 +1,4 @@
 pytest==8.4.2
-# Note, disabling meshtastic for now as this logic needs to be isolated
-# meshtastic==2.7.3
-bleak==1.1.1
 pypubsub==4.0.3
 websockets==15.0.1
 dataclasses-json==0.6.7
