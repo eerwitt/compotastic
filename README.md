@@ -29,6 +29,48 @@ Compotastic spans heterogeneous devices and leverages both the Meshtastic data p
    - Upon receiving a job request, a high-compute node performs model fine-tuning or inference.
    - The resulting optimized firmware bundle is transmitted over Meshtastic, updating low-end devices with the necessary weights and inference logic.
 
+## Mesh Coordination in Practice
+
+The ASCII snapshots below illustrate how Compotastic orchestrates heterogeneous devices inside the mesh when one of the low-power nodes encounters a task that exceeds its capabilities.
+
+```
++-----------------------+----------------------------------------+---------------------------------------------+-----------------------------------------------------------+
+| Node                  | Hardware                               | Status                                      | Action                                                    |
++=======================+========================================+=============================================+===========================================================+
+| Cat Alpha =^.^=       | ARM® Cortex®-M4 with FPU               | Streaming environmental telemetry           | Relays summaries and keeps mesh heartbeat steady          |
+|                       | 1 MB flash / 256 kB RAM                |                                             |                                                           |
++-----------------------+----------------------------------------+---------------------------------------------+-----------------------------------------------------------+
+| Cat Beta /\_/\        | ARM® Cortex®-M4 with FPU               | Blocked on ML inference; requesting compute | Broadcasting assist ping and waiting for policy refresh   |
+|                       | 1 MB flash / 256 kB RAM                |                                             |                                                           |
++-----------------------+----------------------------------------+---------------------------------------------+-----------------------------------------------------------+
+| Cat Gamma (=^･ω･^=)   | ARM® Cortex®-M4 with FPU               | Buffering sensor batches for swarm replay   | Holding results until Cat Beta clears the queue           |
+|                       | 1 MB flash / 256 kB RAM                |                                             |                                                           |
++-----------------------+----------------------------------------+---------------------------------------------+-----------------------------------------------------------+
+| Compot U•ᴥ•U          | Jetson Thor accelerator, LTE backhaul  | Mobile HQ with large battery reserves       | --> Targeting Cat Beta /\_/\ to deliver compute & firmware |
+| (service dog)         | Caches foundation model deltas         |                                             | Synchronizes swarm ledger while en route                  |
++-----------------------+----------------------------------------+---------------------------------------------+-----------------------------------------------------------+
+```
+
+Compot (the mesh service dog) homes in on Cat Beta after detecting the compute request, leveraging its Jetson Thor attachment and network reach to ship the needed model fragments.
+
+The next zoomed-in chart captures how Compot and Cat Beta synchronize state, update the Q-learning policy, and resume execution after Compot processes imagery via the OpenAI Realtime API.
+
+```
++--------------------------+----------------------------------------------------+-----------------------------------------------------------+------------------------------------------------------+
+| Participant              | Synchronization Step                               | Q-Learning & Model Update                                 | Post-Action Result                                   |
++==========================+====================================================+===========================================================+======================================================+
+| Compot U•ᴥ•U             | Captures blockage frame; runs OpenAI Realtime API  | Adds new obstacle state to Q-learning map; retunes policy | Queues mesh-safe delta packets for distribution      |
+|                          | for rapid scene understanding                      | weights to avoid repeat stalls                            |                                                      |
++--------------------------+----------------------------------------------------+-----------------------------------------------------------+------------------------------------------------------+
+| Cat Beta /\_/\           | Shares stalled task context and sensor traces      | Receives updated state slice and assisted execution plan  | Resumes inference using Compot's augmented compute   |
+|                          |                                                    |                                                           | overlay                                              |
++--------------------------+----------------------------------------------------+-----------------------------------------------------------+------------------------------------------------------+
+| Mesh Sync Channel  --->  | Confirms OTA slot, timestamps, and energy budgets  | Commits shared policy delta to distributed registry       | Broadcasts success acknowledgement to the swarm      |
++--------------------------+----------------------------------------------------+-----------------------------------------------------------+------------------------------------------------------+
+```
+
+Together, the devices maintain a resilient learning loop where high-compute resources opportunistically uplift low-power peers without breaking the mesh-first workflow.
+
 ## Getting Started
 
 ### Backend setup
