@@ -29,7 +29,40 @@ Compotastic spans heterogeneous devices and leverages both the Meshtastic data p
    - Upon receiving a job request, a high-compute node performs model fine-tuning or inference.
    - The resulting optimized firmware bundle is transmitted over Meshtastic, updating low-end devices with the necessary weights and inference logic.
 
-## Protocol Simulation
+## Getting Started
+
+### Backend setup
+
+The simulation backend is written in Python and targets Python **3.12**. The
+commands below create an isolated virtual environment, install the required
+dependencies, and launch the websocket server that drives the UI.
+
+```bash
+cd backend
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+# Start the simulation backend
+python simulation/main.py
+```
+
+### Frontend UI
+
+The UI is built with Vite and Phaser. To run it in development mode or produce
+an optimized build, use the commands below from the `ui` directory.
+
+```bash
+cd ui
+npm install
+
+# Start the Vite development server
+npm run dev
+
+# Build the production bundle
+npm run build
+```
 
 ## Future Enhancements
 
