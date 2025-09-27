@@ -1,5 +1,5 @@
 const DEFAULT_WS_URL = 'ws://localhost:8001/ws';
-const DEFAULT_API_BASE_URL = 'http://localhost:8000';
+const DEFAULT_API_BASE_URL = 'http://localhost:8001';
 
 export function getWebSocketUrl() {
     const configuredUrl = import.meta.env.VITE_WS_URL;

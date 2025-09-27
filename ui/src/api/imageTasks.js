@@ -67,7 +67,7 @@ function buildTasksUrl() {
     const trimmed = typeof baseUrl === 'string' ? baseUrl.trim() : '';
     const normalized = trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
 
-    return `${normalized || 'http://localhost:8000'}/tasks`;
+    return `${normalized || 'http://localhost:8001'}/tasks`;
 }
 
 export async function submitImageClassificationRequest({
