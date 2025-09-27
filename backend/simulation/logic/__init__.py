@@ -19,7 +19,7 @@ from dataclasses_json import dataclass_json
 
 
 @dataclass_json
-@dataclass(frozen=True)
+@dataclass
 class LogicProbe:
     """Lightweight object used to verify simulation logic imports."""
 
@@ -32,7 +32,7 @@ class LogicProbe:
 
 
 @dataclass_json
-@dataclass(frozen=True)
+@dataclass
 class GridLocation:
     """Simple integer based coordinate used to place nodes on a 2D grid."""
 
@@ -78,7 +78,7 @@ def _default_logger(message: str) -> None:
     return None
 
 
-@dataclass(frozen=True)
+@dataclass
 class Surroundings:
     """Represents which integer encoded actions are currently available."""
 
@@ -134,7 +134,7 @@ class Surroundings:
         return [int(action) for action in actions]
 
 
-@dataclass(frozen=True)
+@dataclass
 class NodeState:
     """Encapsulates the location and surroundings for Q-learning."""
 
@@ -152,7 +152,7 @@ class NodeState:
 
 
 @dataclass_json
-@dataclass(frozen=True)
+@dataclass
 class MeshtasticNode:
     """Representation of a Meshtastic node used in the simulation grid."""
 
