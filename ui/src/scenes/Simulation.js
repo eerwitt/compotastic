@@ -1,4 +1,5 @@
 import Phaser, { Scene } from 'phaser';
+import { SimulationStatusPanel } from './SimulationStatusPanel';
 
 const DEFAULT_CAT_COUNT = 10;
 const DEFAULT_DOG_COUNT = 1;
@@ -179,7 +180,7 @@ function createAsciiBox(lines) {
 }
 
 class Cat {
-    constructor(scene, grid, tileX, tileY, attributes) {
+    constructor(scene, grid, tileX, tileY, attributes, identifier = null) {
         this.scene = scene;
         this.grid = grid;
         this.speed = Phaser.Math.Between(CAT_SPEED_RANGE.min, CAT_SPEED_RANGE.max);
@@ -190,6 +191,9 @@ class Cat {
         this.text.setInteractive({ useHandCursor: true });
 
         this.attributes = { ...attributes };
+        this.nodeIdentifier = (typeof identifier === 'string' && identifier.trim().length > 0)
+            ? identifier.trim()
+            : null;
         this.modal = scene.add.text(0, 0, '', CAT_MODAL_FONT_STYLE);
         this.modal.setOrigin(0.5, 1);
         this.modal.setDepth(20);
@@ -260,6 +264,10 @@ class Cat {
             `RAM: ${this.attributes.ram}`,
             `LOC: (${this.tileX}, ${this.tileY})`
         ];
+
+        if (this.nodeIdentifier) {
+            lines.unshift(`Node: ${this.nodeIdentifier}`);
+        }
 
         return createAsciiBox(lines);
     }
@@ -434,11 +442,12 @@ class Cat {
 
     destroy() {
         this.text.destroy();
+        this.modal.destroy();
     }
 }
 
 class Dog {
-    constructor(scene, grid, tileX, tileY) {
+    constructor(scene, grid, tileX, tileY, identifier = null) {
         this.scene = scene;
         this.grid = grid;
         this.tileWidth = DOG_TILE_WIDTH;
@@ -476,6 +485,9 @@ class Dog {
         this.tongueEndTime = 0;
         this.nextTongueTime = scene.time.now || 0;
         this.currentAscii = initialAscii;
+        this.nodeIdentifier = (typeof identifier === 'string' && identifier.trim().length > 0)
+            ? identifier.trim()
+            : null;
 
         this.text.on('pointerover', this.showAttributesModal, this);
         this.text.on('pointerout', this.hideAttributesModal, this);
@@ -560,10 +572,13 @@ class Dog {
     }
 
     buildModalContent() {
-        const lines = [
-            `SPD: ${Math.round(this.speed)}`,
-        ];
+        const lines = [];
 
+        if (this.nodeIdentifier) {
+            lines.push(`Node: ${this.nodeIdentifier}`);
+        }
+
+        lines.push(`SPD: ${Math.round(this.speed)}`);
         lines.push(`SIZE: ${this.tileWidth}x${this.tileHeight}`);
         lines.push(`LOC: (${this.tileX}, ${this.tileY})`);
 
@@ -786,9 +801,17 @@ export class Simulation extends Scene {
         this.waitingText = null;
         this.shouldReceiveRemoteUpdates = false;
         this.isWaitingForData = false;
+        this.statusPanel = null;
+        this.highlightGraphics = null;
+        this.activeHighlight = null;
+        this.nextStatusPanelUpdateTime = 0;
+        this.lastSimulationUpdate = null;
+        this.isDemoSimulation = false;
 
         this.handleResize = this.handleResize.bind(this);
         this.handleSimulationData = this.handleSimulationData.bind(this);
+        this.handleNodeHover = this.handleNodeHover.bind(this);
+        this.handleNodeHoverEnd = this.handleNodeHoverEnd.bind(this);
     }
 
     preload() {
@@ -806,6 +829,16 @@ export class Simulation extends Scene {
 
         this.updateGridDimensions(initialGridWidth, initialGridHeight);
         this.scale.on('resize', this.handleResize);
+
+        this.highlightGraphics = this.add.graphics();
+        this.highlightGraphics.setDepth(40);
+        this.highlightGraphics.setVisible(false);
+
+        this.statusPanel = new SimulationStatusPanel(this, {
+            onNodeHover: this.handleNodeHover,
+            onNodeHoverEnd: this.handleNodeHoverEnd,
+            isDemo: this.isDemoSimulation
+        });
 
         if (initialConfig) {
             this.applySimulationConfig(initialConfig);
@@ -829,6 +862,18 @@ export class Simulation extends Scene {
 
             this.clearAnimals();
             this.exitWaitingForDataState();
+
+            if (this.statusPanel) {
+                this.statusPanel.destroy();
+                this.statusPanel = null;
+            }
+
+            if (this.highlightGraphics) {
+                this.highlightGraphics.destroy();
+                this.highlightGraphics = null;
+            }
+
+            this.activeHighlight = null;
 
             if (this.shouldReceiveRemoteUpdates) {
                 this.game.events.off('simulation-data', this.handleSimulationData, this);
@@ -873,11 +918,12 @@ export class Simulation extends Scene {
 
     normalizeCatEntry(entry) {
         if (!entry || typeof entry !== 'object') {
-            return { tileX: null, tileY: null, attributes: null };
+            return { tileX: null, tileY: null, attributes: null, identifier: null };
         }
 
         const tileX = this.extractTileCoordinate(entry, 'x');
         const tileY = this.extractTileCoordinate(entry, 'y');
+        const identifier = this.extractIdentifier(entry);
         let attributes = (entry.attributes && typeof entry.attributes === 'object')
             ? { ...entry.attributes }
             : null;
@@ -886,7 +932,7 @@ export class Simulation extends Scene {
             attributes = this.deriveAttributesFromNode(entry);
         }
 
-        return { tileX, tileY, attributes };
+        return { tileX, tileY, attributes, identifier };
     }
 
     deriveAttributesFromNode(entry) {
@@ -928,13 +974,14 @@ export class Simulation extends Scene {
 
     normalizeDogEntry(entry) {
         if (!entry || typeof entry !== 'object') {
-            return { tileX: null, tileY: null };
+            return { tileX: null, tileY: null, identifier: null };
         }
 
         const tileX = this.extractTileCoordinate(entry, 'x');
         const tileY = this.extractTileCoordinate(entry, 'y');
+        const identifier = this.extractIdentifier(entry);
 
-        return { tileX, tileY };
+        return { tileX, tileY, identifier };
     }
 
     extractTileCoordinate(entry, axis) {
@@ -960,6 +1007,43 @@ export class Simulation extends Scene {
         return null;
     }
 
+    extractIdentifier(entry) {
+        if (!entry || typeof entry !== 'object') {
+            return null;
+        }
+
+        const candidates = [
+            entry.identifier,
+            entry.id,
+            entry.name,
+            entry.node_identifier,
+            entry.nodeId
+        ];
+
+        for (const candidate of candidates) {
+            if (typeof candidate === 'string' && candidate.trim().length > 0) {
+                return candidate.trim();
+            }
+        }
+
+        return null;
+    }
+
+    resolveIdentifier(candidate, prefix, index) {
+        if (typeof candidate === 'string' && candidate.trim().length > 0) {
+            return candidate.trim();
+        }
+
+        const safePrefix = typeof prefix === 'string' && prefix.trim().length > 0
+            ? prefix.trim()
+            : 'node';
+        const suffix = Number.isInteger(index) && index > 0
+            ? index
+            : 1;
+
+        return `${safePrefix}-${suffix}`;
+    }
+
     applySimulationConfig(config) {
         if (!config) {
             return;
@@ -968,6 +1052,8 @@ export class Simulation extends Scene {
         this.exitWaitingForDataState();
         this.updateGridDimensions(config.grid?.width, config.grid?.height);
         this.rebuildAnimalsFromConfig(config);
+        this.lastSimulationUpdate = Date.now();
+        this.refreshStatusPanel();
     }
 
     updateGridDimensions(widthCandidate, heightCandidate) {
@@ -1027,13 +1113,15 @@ export class Simulation extends Scene {
                 ? { ...defaultAttributes, ...catEntry.attributes }
                 : { ...defaultAttributes };
 
-            const cat = new Cat(this, this.grid, catEntry.tileX, catEntry.tileY, catAttributes);
+            const identifier = this.resolveIdentifier(catEntry.identifier, 'cat', catIndex + 1);
+            const cat = new Cat(this, this.grid, catEntry.tileX, catEntry.tileY, catAttributes, identifier);
 
             cat.lookAround(this.time.now || 0);
             this.cats.push(cat);
             catIndex += 1;
         });
 
+        let dogIndex = 0;
         config.dogs.forEach((dogEntry) => {
             if (!Number.isInteger(dogEntry.tileX) || !Number.isInteger(dogEntry.tileY)) {
                 return;
@@ -1043,9 +1131,11 @@ export class Simulation extends Scene {
                 return;
             }
 
-            const dog = new Dog(this, this.grid, dogEntry.tileX, dogEntry.tileY);
+            const identifier = this.resolveIdentifier(dogEntry.identifier, 'dog', dogIndex + 1);
+            const dog = new Dog(this, this.grid, dogEntry.tileX, dogEntry.tileY, identifier);
 
             this.dogs.push(dog);
+            dogIndex += 1;
         });
     }
 
@@ -1055,6 +1145,8 @@ export class Simulation extends Scene {
 
         this.cats = [];
         this.dogs = [];
+        this.activeHighlight = null;
+        this.clearNodeHighlight();
     }
 
     populateRandom() {
@@ -1098,7 +1190,8 @@ export class Simulation extends Scene {
             const attributeIndex = i % attributePool.length;
             const catAttributes = { ...attributePool[attributeIndex] };
 
-            const cat = new Cat(this, this.grid, tileX, tileY, catAttributes);
+            const identifier = this.resolveIdentifier(null, 'sim-cat', i + 1);
+            const cat = new Cat(this, this.grid, tileX, tileY, catAttributes, identifier);
 
             cat.lookAround(this.time.now || 0);
             this.cats.push(cat);
@@ -1129,11 +1222,15 @@ export class Simulation extends Scene {
                     break;
                 }
 
-                const dog = new Dog(this, this.grid, tileX, tileY);
+                const identifier = this.resolveIdentifier(null, 'sim-dog', i + 1);
+                const dog = new Dog(this, this.grid, tileX, tileY, identifier);
 
                 this.dogs.push(dog);
             }
         }
+
+        this.lastSimulationUpdate = Date.now();
+        this.refreshStatusPanel();
     }
 
     isTileOccupiedByCat(tileX, tileY, ignoreCat = null) {
@@ -1249,6 +1346,7 @@ export class Simulation extends Scene {
         this.waitingText.setScrollFactor(0);
         this.waitingText.setOrigin(0.5, 0.5);
         this.positionWaitingText();
+        this.refreshStatusPanel();
     }
 
     exitWaitingForDataState() {
@@ -1258,6 +1356,8 @@ export class Simulation extends Scene {
             this.waitingText.destroy();
             this.waitingText = null;
         }
+
+        this.refreshStatusPanel();
     }
 
     positionWaitingText() {
@@ -1284,9 +1384,282 @@ export class Simulation extends Scene {
         this.applySimulationConfig(config);
     }
 
+    buildStatusPanelData() {
+        if (!this.statusPanel) {
+            return null;
+        }
+
+        const grid = this.grid
+            ? { width: this.grid.tileCountWidth, height: this.grid.tileCountHeight }
+            : { width: GRID_TILE_COUNT.width, height: GRID_TILE_COUNT.height };
+        const nodes = this.collectNodeEntries();
+        const totalNodes = nodes.length;
+        let activeNodes = nodes.reduce((sum, node) => sum + (node.isActive ? 1 : 0), 0);
+
+        if (this.isDemoSimulation && totalNodes > 0) {
+            activeNodes = Math.max(1, Math.min(totalNodes, Math.round(totalNodes * 0.72)));
+        }
+
+        const mode = this.isDemoSimulation
+            ? 'DEMO'
+            : (this.shouldReceiveRemoteUpdates ? 'LIVE' : 'LOCAL');
+
+        return {
+            grid,
+            catCount: this.cats.length,
+            dogCount: this.dogs.length,
+            totalNodes,
+            activeNodes,
+            mode,
+            lastUpdatedAt: this.lastSimulationUpdate,
+            waitingForData: this.isWaitingForData,
+            nodes,
+            isDemo: this.isDemoSimulation
+        };
+    }
+
+    collectNodeEntries() {
+        const nodes = [];
+
+        this.cats.forEach((cat, index) => {
+            const entry = this.buildCatNodeEntry(cat, index);
+
+            if (entry) {
+                nodes.push(entry);
+            }
+        });
+
+        this.dogs.forEach((dog, index) => {
+            const entry = this.buildDogNodeEntry(dog, index);
+
+            if (entry) {
+                nodes.push(entry);
+            }
+        });
+
+        return nodes;
+    }
+
+    buildCatNodeEntry(cat, index) {
+        if (!cat) {
+            return null;
+        }
+
+        const status = this.determineCatStatus(cat);
+        const identifier = cat.nodeIdentifier || `cat-${index + 1}`;
+        const name = cat.nodeIdentifier || `Cat ${index + 1}`;
+
+        return {
+            id: identifier,
+            name,
+            type: 'cat',
+            tileX: cat.tileX,
+            tileY: cat.tileY,
+            tileWidth: 1,
+            tileHeight: 1,
+            status,
+            displayStatus: status,
+            isActive: this.isCatActive(cat)
+        };
+    }
+
+    buildDogNodeEntry(dog, index) {
+        if (!dog) {
+            return null;
+        }
+
+        const status = this.determineDogStatus(dog);
+        const identifier = dog.nodeIdentifier || `dog-${index + 1}`;
+        const name = dog.nodeIdentifier || `Dog ${index + 1}`;
+
+        return {
+            id: identifier,
+            name,
+            type: 'dog',
+            tileX: dog.tileX,
+            tileY: dog.tileY,
+            tileWidth: dog.tileWidth,
+            tileHeight: dog.tileHeight,
+            status,
+            displayStatus: status,
+            isActive: this.isDogActive(dog)
+        };
+    }
+
+    determineCatStatus(cat) {
+        if (!cat) {
+            return 'Idle';
+        }
+
+        if (cat.isMoving) {
+            return 'Relocating across mesh';
+        }
+
+        if (cat.isMouthOpen) {
+            return 'Transmitting diagnostics';
+        }
+
+        if (cat.isBlinking) {
+            return 'Scanning sector';
+        }
+
+        return 'Standing by';
+    }
+
+    determineDogStatus(dog) {
+        if (!dog) {
+            return 'Idle';
+        }
+
+        if (dog.isMoving) {
+            return 'Patrolling network routes';
+        }
+
+        if (dog.isTongueOut) {
+            return 'Cooling radio hardware';
+        }
+
+        if (dog.isBlinking) {
+            return 'Monitoring traffic';
+        }
+
+        return 'Stationed';
+    }
+
+    isCatActive(cat) {
+        return Boolean(cat && (cat.isMoving || cat.isMouthOpen));
+    }
+
+    isDogActive(dog) {
+        return Boolean(dog && (dog.isMoving || dog.isTongueOut));
+    }
+
+    refreshStatusPanel() {
+        if (!this.statusPanel) {
+            return;
+        }
+
+        const panelData = this.buildStatusPanelData();
+
+        if (panelData) {
+            this.statusPanel.update(panelData);
+            this.updateActiveHighlightFromNodes(panelData.nodes);
+        }
+    }
+
+    handleNodeHover(nodeData) {
+        if (!nodeData) {
+            return;
+        }
+
+        this.activeHighlight = {
+            id: typeof nodeData.id === 'string' ? nodeData.id : null,
+            tileX: Number.isInteger(nodeData.tileX) ? nodeData.tileX : null,
+            tileY: Number.isInteger(nodeData.tileY) ? nodeData.tileY : null,
+            tileWidth: Number.isInteger(nodeData.tileWidth) ? Math.max(1, nodeData.tileWidth) : 1,
+            tileHeight: Number.isInteger(nodeData.tileHeight) ? Math.max(1, nodeData.tileHeight) : 1,
+            type: nodeData.type
+        };
+
+        this.drawHighlight(this.activeHighlight);
+    }
+
+    handleNodeHoverEnd() {
+        this.activeHighlight = null;
+        this.clearNodeHighlight();
+    }
+
+    drawHighlight(nodeData) {
+        if (!this.highlightGraphics || !this.grid) {
+            return;
+        }
+
+        const tileX = Number.isInteger(nodeData?.tileX) ? nodeData.tileX : null;
+        const tileY = Number.isInteger(nodeData?.tileY) ? nodeData.tileY : null;
+
+        if (tileX === null || tileY === null) {
+            this.clearNodeHighlight();
+            return;
+        }
+
+        const tileWidth = Number.isInteger(nodeData.tileWidth) && nodeData.tileWidth > 0
+            ? nodeData.tileWidth
+            : 1;
+        const tileHeight = Number.isInteger(nodeData.tileHeight) && nodeData.tileHeight > 0
+            ? nodeData.tileHeight
+            : 1;
+        const color = nodeData.type === 'dog' ? 0xffd37d : 0x7cb7ff;
+        const left = tileX * this.grid.tileSize;
+        const top = tileY * this.grid.tileSize;
+        const width = tileWidth * this.grid.tileSize;
+        const height = tileHeight * this.grid.tileSize;
+
+        this.highlightGraphics.clear();
+        this.highlightGraphics.lineStyle(2, color, 0.95);
+        this.highlightGraphics.strokeRect(left, top, width, height);
+        this.highlightGraphics.fillStyle(color, 0.25);
+        this.highlightGraphics.fillRect(left, top, width, height);
+        this.highlightGraphics.setVisible(true);
+    }
+
+    clearNodeHighlight() {
+        if (!this.highlightGraphics) {
+            return;
+        }
+
+        this.highlightGraphics.clear();
+        this.highlightGraphics.setVisible(false);
+    }
+
+    applyActiveHighlight() {
+        if (!this.activeHighlight) {
+            this.clearNodeHighlight();
+            return;
+        }
+
+        this.drawHighlight(this.activeHighlight);
+    }
+
+    updateActiveHighlightFromNodes(nodes) {
+        if (!this.activeHighlight) {
+            return;
+        }
+
+        if (!Array.isArray(nodes) || nodes.length === 0) {
+            this.handleNodeHoverEnd();
+            return;
+        }
+
+        if (this.activeHighlight.id) {
+            const match = nodes.find((node) => node.id === this.activeHighlight.id);
+
+            if (!match) {
+                this.handleNodeHoverEnd();
+                return;
+            }
+
+            this.activeHighlight.tileX = Number.isInteger(match.tileX) ? match.tileX : this.activeHighlight.tileX;
+            this.activeHighlight.tileY = Number.isInteger(match.tileY) ? match.tileY : this.activeHighlight.tileY;
+            this.activeHighlight.tileWidth = Number.isInteger(match.tileWidth) && match.tileWidth > 0
+                ? match.tileWidth
+                : this.activeHighlight.tileWidth;
+            this.activeHighlight.tileHeight = Number.isInteger(match.tileHeight) && match.tileHeight > 0
+                ? match.tileHeight
+                : this.activeHighlight.tileHeight;
+            this.activeHighlight.type = match.type;
+        }
+
+        this.applyActiveHighlight();
+    }
+
     update(time) {
         this.cats.forEach((cat) => cat.update(time));
         this.dogs.forEach((dog) => dog.update(time, this.cats));
+
+        if (typeof time === 'number' && time >= this.nextStatusPanelUpdateTime) {
+            this.refreshStatusPanel();
+            this.nextStatusPanelUpdateTime = time + 500;
+        }
     }
 
     handleResize(gameSize) {
@@ -1306,5 +1679,10 @@ export class Simulation extends Scene {
         this.dogs.forEach((dog) => dog.onGridLayoutChanged());
 
         this.positionWaitingText();
+        if (this.statusPanel) {
+            this.statusPanel.handleResize(gameSize || this.scale.gameSize);
+        }
+
+        this.applyActiveHighlight();
     }
 }
