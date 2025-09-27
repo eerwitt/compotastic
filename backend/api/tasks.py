@@ -212,7 +212,7 @@ class OpenAIImageProcessingService:
                         {"type": "input_text", "text": prompt},
                         {
                             "type": "input_image",
-                            "image_file": {"file_id": upload.id},
+                            "file_id": upload.id,
                         },
                     ],
                 }

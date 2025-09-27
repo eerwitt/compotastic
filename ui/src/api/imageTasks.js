@@ -69,15 +69,7 @@ function normalizePrompt(prompt) {
 function buildMetadata({ prompt, tileX, tileY, imagePath, imageLabel, filename }) {
     return {
         prompt,
-        tile: {
-            x: Number.isFinite(tileX) ? tileX : null,
-            y: Number.isFinite(tileY) ? tileY : null
-        },
-        image: {
-            path: imagePath,
-            label: typeof imageLabel === 'string' ? imageLabel : '',
-            filename
-        },
+        tile: 'default-title',
         source: 'phaser-grid-selection',
         createdAt: new Date().toISOString()
     };
