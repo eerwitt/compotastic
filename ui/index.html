@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="./favicon.png" />
@@ -12,36 +13,42 @@
     <div id="app">
         <aside id="info-panel" class="info-panel" aria-label="Project information">
             <div class="info-header">
-                <h1>Project Guide 🚀</h1>
+                <h1>Compotastic</h1>
                 <button id="info-toggle" type="button" aria-controls="panel-content" aria-expanded="true">
-                    Hide guide 🙈
+                    🙈
                 </button>
             </div>
             <div id="panel-content" class="info-content">
-                <div class="ascii-roster" aria-label="Swarm roster overview">
-                    <pre aria-hidden="true">
-^.^      Cat Scouts — nimble Q-learning edge bots
--.-      Low-power explorers sharing grid discoveries
-^o^      Coordinated learners refining their local policies
-
-/\_/\
-( o.o)
-(  ^ )   Compot — mesh shepherd with foundation models
-----
-/\_/\
-( -.-)
-(  U )   High-compute relay syncing swarm intelligence
-----
-                    </pre>
-                </div>
-                <p>This simulation highlights a large-scale deployment of a mixed robot swarm exploring a shared grid.</p>
-                <p>The playful cat agents represent lightweight edge devices running compact Q-learning loops to hunt down their individual objectives. The roaming dog stands in for a higher-compute node capable of executing foundation models sourced from the internet or local stores while continuously refining the swarm's shared Q-learning state.</p>
+                <p>This simulation highlights a large-scale deployment of a mixed robot swarm exploring a shared grid.
+                </p>
+                <p>The playful cat agents represent lightweight edge devices running compact Q-learning loops to hunt
+                    down their individual objectives. The roaming dog stands in for a higher-compute node capable of
+                    executing foundation models sourced from the internet or local stores while continuously refining
+                    the swarm's shared Q-learning state.</p>
                 <ul>
-                    <li>🐾 Each small cat pushes updates about its discoveries so the dog can aggregate, retrain, and redistribute smarter policies.</li>
-                    <li>🐕 The dog coordinates strategy refinement, injecting large-model insights back into every node it meets on the grid.</li>
-                    <li>📡 Meshtastic-powered LORA links stitch the fleet together, moving telemetry and policy updates across kilometers on just a few amp-hours.</li>
+                    <li>🐾 Each small cat pushes updates about its discoveries so the dog can aggregate, retrain, and
+                        redistribute smarter policies.</li>
+                    <li>🐕 The dog coordinates strategy refinement, injecting large-model insights back into every node
+                        it meets on the grid.</li>
+                    <li>📡 Meshtastic-powered LORA links stitch the fleet together, moving telemetry and policy updates
+                        across kilometers on just a few amp-hours.</li>
                 </ul>
-                <p>Watch how the mesh stays resilient as state ripples across the network—then toggle the guide whenever you need a quick refresher. ✨</p>
+                <p>Watch how the mesh stays resilient as state ripples across the network—then toggle the guide whenever
+                    you need a quick refresher. ✨</p>
+
+                <div class="ascii-roster" aria-label="Swarm roster overview">
+                    <h2>Swarm Roster</h2>
+                    <b>^.^</b>
+                    <p>Cat Scouts - nimble Q-learning edge bots, low power and dedicated to do specific jobs. Lazy.</p>
+
+                    <pre>
+ /\_/\
+( -.-)
+(  U )
+</pre>
+                    <p>Compot - high compute but expensive dog node, running large models and coordinating the swarm.
+                    </p>
+                </div>
             </div>
         </aside>
         <div id="game-container"></div>
@@ -55,9 +62,10 @@
             infoToggle.addEventListener('click', () => {
                 const collapsed = infoPanel.classList.toggle('collapsed');
                 infoToggle.setAttribute('aria-expanded', (!collapsed).toString());
-                infoToggle.textContent = collapsed ? 'Show guide 📘' : 'Hide guide 🙈';
+                infoToggle.textContent = collapsed ? '📘' : '🙈';
             });
         }
     </script>
 </body>
+
 </html>
