@@ -43,6 +43,18 @@ const DOG_MOUTH_TONGUE = 'U';
 const CAT_BLINK_FACE = '-.-';
 const CAT_MOUTH_FACE = '^o^';
 
+function getRandomEventDelay(range, includePhaseOffset = false) {
+    const baseInterval = Phaser.Math.Between(range.min, range.max);
+    const jitterUpperBound = Math.max(0, Math.floor((range.max - range.min) * 0.5));
+    const jitter = jitterUpperBound > 0 ? Phaser.Math.Between(0, jitterUpperBound) : 0;
+    const fractionalJitter = Phaser.Math.FloatBetween(0, 1);
+    const phaseOffset = includePhaseOffset && range.max > range.min
+        ? Phaser.Math.Between(0, range.max - range.min)
+        : 0;
+
+    return baseInterval + jitter + fractionalJitter + phaseOffset;
+}
+
 function buildDogAscii(eyes, mouth) {
     return `/\\_/\\\n( ${eyes})\n(  ${mouth} )\n----`;
 }
@@ -310,8 +322,9 @@ class Cat {
         this.text.on('pointerout', this.hideAttributesModal, this);
 
         this.onGridLayoutChanged();
-        this.scheduleNextBlink(scene.time.now || 0);
-        this.scheduleNextMouthOpen(scene.time.now || 0);
+        const initialTime = scene.time.now || 0;
+        this.scheduleNextBlink(initialTime, { usePhaseOffset: true });
+        this.scheduleNextMouthOpen(initialTime, { usePhaseOffset: true });
     }
 
     setPosition(tileX, tileY) {
@@ -422,18 +435,14 @@ class Cat {
         this.modal.setVisible(false);
     }
 
-    scheduleNextBlink(time) {
-        this.nextBlinkTime = time + Phaser.Math.Between(
-            CAT_BLINK_INTERVAL_RANGE.min,
-            CAT_BLINK_INTERVAL_RANGE.max
-        );
+    scheduleNextBlink(time, options = {}) {
+        const { usePhaseOffset = false } = options;
+        this.nextBlinkTime = time + getRandomEventDelay(CAT_BLINK_INTERVAL_RANGE, usePhaseOffset);
     }
 
-    scheduleNextMouthOpen(time) {
-        this.nextMouthOpenTime = time + Phaser.Math.Between(
-            CAT_MOUTH_INTERVAL_RANGE.min,
-            CAT_MOUTH_INTERVAL_RANGE.max
-        );
+    scheduleNextMouthOpen(time, options = {}) {
+        const { usePhaseOffset = false } = options;
+        this.nextMouthOpenTime = time + getRandomEventDelay(CAT_MOUTH_INTERVAL_RANGE, usePhaseOffset);
     }
 
     beginBlink(time) {
@@ -651,8 +660,9 @@ class Dog {
         this.text.on('pointerout', this.hideAttributesModal, this);
 
         this.onGridLayoutChanged();
-        this.scheduleNextBlink(scene.time.now || 0);
-        this.scheduleNextTongue(scene.time.now || 0);
+        const initialTime = scene.time.now || 0;
+        this.scheduleNextBlink(initialTime, { usePhaseOffset: true });
+        this.scheduleNextTongue(initialTime, { usePhaseOffset: true });
     }
 
     computeAreaCenter(tileX, tileY) {
@@ -758,18 +768,14 @@ class Dog {
         this.modal.setVisible(false);
     }
 
-    scheduleNextBlink(time) {
-        this.nextBlinkTime = time + Phaser.Math.Between(
-            DOG_BLINK_INTERVAL_RANGE.min,
-            DOG_BLINK_INTERVAL_RANGE.max
-        );
+    scheduleNextBlink(time, options = {}) {
+        const { usePhaseOffset = false } = options;
+        this.nextBlinkTime = time + getRandomEventDelay(DOG_BLINK_INTERVAL_RANGE, usePhaseOffset);
     }
 
-    scheduleNextTongue(time) {
-        this.nextTongueTime = time + Phaser.Math.Between(
-            DOG_TONGUE_INTERVAL_RANGE.min,
-            DOG_TONGUE_INTERVAL_RANGE.max
-        );
+    scheduleNextTongue(time, options = {}) {
+        const { usePhaseOffset = false } = options;
+        this.nextTongueTime = time + getRandomEventDelay(DOG_TONGUE_INTERVAL_RANGE, usePhaseOffset);
     }
 
     beginBlink(time) {
