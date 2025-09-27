@@ -31,11 +31,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: arcade-web-build
-          path: build/web
+          path: simulation/build/web
           if-no-files-found: error
 
       - name: "Upload to GitHub pages branch gh-pages"
         uses: JamesIves/github-pages-deploy-action@4.1.7
         with:
           branch: gh-pages
-          folder: build/web
+          folder: simulation/build/web
