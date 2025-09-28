@@ -6,6 +6,7 @@ const DEFAULT_CAT_COUNT = 10;
 const DEFAULT_DOG_COUNT = 1;
 
 const DOG_FONT_STYLE = { fontFamily: 'Courier', fontSize: 30, color: '#f5deb3ff', align: 'center', fontStyle: 'bold' };
+const DOG_ALERT_POINTER_STYLE = { fontFamily: 'Courier', fontSize: 24, color: '#00ff00', fontStyle: 'bold' };
 
 const CAT_FACE = '^.^';
 const CAT_ALERT_SYMBOL = '/!\\';
@@ -308,6 +309,8 @@ class Cat {
             CAT_ALERT_FLASH_INTERVAL_RANGE.min,
             CAT_ALERT_FLASH_INTERVAL_RANGE.max
         );
+        this.alertResponder = null;
+        this.alertHoldLogged = false;
 
         if (this.alertDetails) {
             this.isAlertSymbolVisible = true;
@@ -331,6 +334,9 @@ class Cat {
         this.tileY = tileY;
 
         this.nextLookTime = scene.time.now || 0;
+        if (this.hasAlert()) {
+            this.nextLookTime = Number.POSITIVE_INFINITY;
+        }
         this.isMoving = false;
         this.moveStartTime = 0;
         this.moveDuration = 0;
@@ -585,6 +591,15 @@ class Cat {
             return;
         }
 
+        if (this.hasAlert()) {
+            if (!this.alertHoldLogged) {
+                this.recordMovementLog('Holding position due to active alert', time);
+                this.alertHoldLogged = true;
+            }
+            this.nextLookTime = Number.POSITIVE_INFINITY;
+            return;
+        }
+
         this.recordMovementLog('Scanning for available paths', time);
         const availableDirections = DIRECTIONS.filter((direction) => {
             const nextTileX = this.tileX + direction.x;
@@ -691,7 +706,51 @@ class Cat {
             return;
         }
 
+        if (this.hasAlert()) {
+            this.nextLookTime = Number.POSITIVE_INFINITY;
+            return;
+        }
+
         this.nextLookTime = time + Phaser.Math.Between(LOOK_INTERVAL_RANGE.min, LOOK_INTERVAL_RANGE.max);
+    }
+
+    assignAlertResponder(dog) {
+        this.alertResponder = dog;
+    }
+
+    clearAlertResponder(dog = null) {
+        if (!dog || this.alertResponder === dog) {
+            this.alertResponder = null;
+        }
+    }
+
+    getAlertResponder() {
+        return this.alertResponder;
+    }
+
+    clearAlert(time) {
+        if (!this.hasAlert()) {
+            return;
+        }
+
+        this.alertDetails = null;
+        this.isAlertSymbolVisible = false;
+        this.nextAlertToggleTime = Number.POSITIVE_INFINITY;
+        this.currentFace = CAT_FACE;
+        this.text.setText(this.currentFace);
+        this.scaleToTile();
+        this.applyCurrentFace();
+        this.alertHoldLogged = false;
+        this.clearAlertResponder();
+
+        const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+        this.recordMovementLog('Alert cleared — resuming patrol', timestamp);
+        this.scheduleNextLook(timestamp);
+
+        if (this.modal.visible) {
+            this.modal.setText(this.buildModalContent());
+            this.updateModalPosition();
+        }
     }
 
     onGridLayoutChanged() {
@@ -824,6 +883,12 @@ class Dog {
         this.tongueEndTime = 0;
         this.nextTongueTime = scene.time.now || 0;
         this.currentAscii = initialAscii;
+        this.alertTarget = null;
+        this.alertPointer = scene.add.text(0, 0, '', DOG_ALERT_POINTER_STYLE);
+        this.alertPointer.setOrigin(0.5, 0.5);
+        this.alertPointer.setDepth(6);
+        this.alertPointer.setVisible(false);
+        this.alertPathBlocked = false;
         this.nodeIdentifier = (typeof identifier === 'string' && identifier.trim().length > 0)
             ? identifier.trim()
             : null;
@@ -865,6 +930,10 @@ class Dog {
         this.targetPixelX = position.x;
         this.targetPixelY = position.y;
 
+        if (this.alertPointer.visible) {
+            this.alertPointer.setPosition(position.x, position.y);
+        }
+
         if (this.modal.visible) {
             this.updateModalPosition();
         }
@@ -895,7 +964,8 @@ class Dog {
         this.nextMoveCheckTime = time + Phaser.Math.Between(DOG_MOVE_INTERVAL_RANGE.min, DOG_MOVE_INTERVAL_RANGE.max);
     }
 
-    beginMovement(tileX, tileY, time) {
+    beginMovement(tileX, tileY, time, options = {}) {
+        const { reason = 'patrol', pointerDirection = null } = options;
         const targetPosition = this.computeAreaCenter(tileX, tileY);
 
         this.startPixelX = this.text.x;
@@ -915,10 +985,137 @@ class Dog {
         this.moveDuration = distance > 0 ? (distance / this.speed) * 1000 : 0;
         this.moveStartTime = time;
         this.isMoving = true;
-        this.recordMovementLog(
-            `Started patrol toward (${this.targetTileX}, ${this.targetTileY})`,
-            time
+        const logMessage = reason === 'alert'
+            ? `Moving to assist alert at (${this.targetTileX}, ${this.targetTileY})`
+            : `Started patrol toward (${this.targetTileX}, ${this.targetTileY})`;
+        this.recordMovementLog(logMessage, time);
+
+        if (reason === 'alert' && pointerDirection) {
+            this.showAlertPointer(pointerDirection);
+        } else if (reason !== 'alert') {
+            this.hideAlertPointer();
+        }
+    }
+
+    resolvePointerSymbol(direction) {
+        if (!direction || typeof direction !== 'object') {
+            return '->';
+        }
+
+        const { x = 0, y = 0 } = direction;
+
+        if (Math.abs(x) >= Math.abs(y)) {
+            if (x > 0) {
+                return '->';
+            }
+
+            if (x < 0) {
+                return '<-';
+            }
+        }
+
+        if (y < 0) {
+            return '^';
+        }
+
+        if (y > 0) {
+            return 'v';
+        }
+
+        return '->';
+    }
+
+    showAlertPointer(direction) {
+        const symbol = this.resolvePointerSymbol(direction);
+        this.alertPointer.setText(symbol);
+        this.alertPointer.setVisible(true);
+        this.alertPointer.setPosition(this.text.x, this.text.y);
+    }
+
+    hideAlertPointer() {
+        this.alertPointer.setVisible(false);
+    }
+
+    setAlertTarget(cat, time) {
+        if (this.alertTarget === cat) {
+            return;
+        }
+
+        const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+
+        if (this.alertTarget && typeof this.alertTarget.clearAlertResponder === 'function') {
+            this.alertTarget.clearAlertResponder(this);
+        }
+
+        this.alertTarget = cat || null;
+        this.alertPathBlocked = false;
+
+        if (this.alertTarget) {
+            this.recordMovementLog(
+                `Dispatched to alert at (${this.alertTarget.tileX}, ${this.alertTarget.tileY})`,
+                timestamp
+            );
+            this.nextMoveCheckTime = timestamp;
+        } else {
+            this.hideAlertPointer();
+        }
+    }
+
+    clearAlertTarget(options = {}) {
+        const { silent = false, time = null } = options;
+
+        if (!this.alertTarget) {
+            return false;
+        }
+
+        const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+
+        if (!silent) {
+            this.recordMovementLog('Standing down from alert response', timestamp);
+        }
+
+        if (typeof this.alertTarget.clearAlertResponder === 'function') {
+            this.alertTarget.clearAlertResponder(this);
+        }
+
+        this.alertTarget = null;
+        this.alertPathBlocked = false;
+        this.hideAlertPointer();
+        return true;
+    }
+
+    isRespondingToAlert() {
+        return Boolean(this.alertTarget);
+    }
+
+    coversTile(tileX, tileY) {
+        return (
+            tileX >= this.tileX &&
+            tileY >= this.tileY &&
+            tileX < this.tileX + this.tileWidth &&
+            tileY < this.tileY + this.tileHeight
         );
+    }
+
+    resolveAlert(time) {
+        if (!this.alertTarget) {
+            return;
+        }
+
+        const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+        const cat = this.alertTarget;
+
+        this.recordMovementLog(
+            `Alert resolved for (${cat.tileX}, ${cat.tileY})`,
+            timestamp
+        );
+
+        if (typeof cat.clearAlert === 'function') {
+            cat.clearAlert(timestamp);
+        }
+
+        this.clearAlertTarget({ silent: true, time: timestamp });
+        this.scheduleNextMoveCheck(timestamp);
     }
 
     buildModalContent() {
@@ -1067,6 +1264,25 @@ class Dog {
     update(time, cats) {
         this.updateFacialAnimations(time);
 
+        let hasActiveAlert = false;
+
+        if (this.isRespondingToAlert() && this.alertTarget) {
+            const catHasAlert = typeof this.alertTarget.hasAlert === 'function'
+                ? this.alertTarget.hasAlert()
+                : Boolean(this.alertTarget.alertDetails);
+
+            hasActiveAlert = catHasAlert;
+
+            if (!catHasAlert) {
+                const cleared = this.clearAlertTarget({ silent: true, time });
+                if (cleared) {
+                    const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+                    this.scheduleNextMoveCheck(timestamp);
+                }
+                hasActiveAlert = false;
+            }
+        }
+
         if (this.isMoving) {
             const elapsed = time - this.moveStartTime;
             const progress = this.moveDuration > 0 ? Phaser.Math.Clamp(elapsed / this.moveDuration, 0, 1) : 1;
@@ -1076,6 +1292,10 @@ class Dog {
 
             this.text.setPosition(currentX, currentY);
 
+            if (this.alertPointer.visible) {
+                this.alertPointer.setPosition(currentX, currentY);
+            }
+
             if (this.modal.visible) {
                 this.modal.setText(this.buildModalContent());
                 this.updateModalPosition();
@@ -1084,19 +1304,57 @@ class Dog {
             if (progress >= 1) {
                 this.isMoving = false;
                 this.setPosition(this.targetTileX, this.targetTileY);
-                this.scheduleNextMoveCheck(time);
                 this.recordMovementLog(
                     `Arrived at (${this.tileX}, ${this.tileY})`,
                     time
                 );
+
+                if (
+                    hasActiveAlert &&
+                    this.alertTarget &&
+                    this.coversTile(this.alertTarget.tileX, this.alertTarget.tileY)
+                ) {
+                    this.resolveAlert(time);
+                } else if (this.isRespondingToAlert() && hasActiveAlert) {
+                    this.hideAlertPointer();
+                } else if (!this.isRespondingToAlert()) {
+                    this.scheduleNextMoveCheck(time);
+                }
             }
 
             return;
         }
 
+        if (this.alertPointer.visible && !hasActiveAlert) {
+            this.hideAlertPointer();
+        }
+
         if (this.modal.visible) {
             this.modal.setText(this.buildModalContent());
             this.updateModalPosition();
+        }
+
+        if (hasActiveAlert && this.alertTarget) {
+            const move = this.determineStepToward(this.alertTarget);
+
+            if (!move) {
+                if (!this.alertPathBlocked) {
+                    this.recordMovementLog('Alert path blocked — holding position', time);
+                    this.alertPathBlocked = true;
+                }
+
+                this.hideAlertPointer();
+
+                return;
+            }
+
+            this.alertPathBlocked = false;
+            this.beginMovement(this.tileX + move.x, this.tileY + move.y, time, {
+                reason: 'alert',
+                pointerDirection: move
+            });
+
+            return;
         }
 
         if (time < this.nextMoveCheckTime) {
@@ -1145,6 +1403,7 @@ class Dog {
     destroy() {
         this.text.destroy();
         this.modal.destroy();
+        this.alertPointer.destroy();
     }
 
     recordMovementLog(message, time) {
@@ -2375,6 +2634,17 @@ export class Simulation extends Scene {
             return 'Idle';
         }
 
+        if (typeof dog.isRespondingToAlert === 'function' && dog.isRespondingToAlert()) {
+            const targetCat = dog.alertTarget;
+            const fallbackLabel = targetCat
+                ? `cat at (${targetCat.tileX}, ${targetCat.tileY})`
+                : 'alerted cat';
+            const targetLabel = targetCat && typeof targetCat.nodeIdentifier === 'string'
+                ? targetCat.nodeIdentifier
+                : fallbackLabel;
+            return `Responding to ${targetLabel}`;
+        }
+
         if (dog.isMoving) {
             return 'Patrolling network routes';
         }
@@ -2397,7 +2667,9 @@ export class Simulation extends Scene {
     }
 
     isDogActive(dog) {
-        return Boolean(dog && (dog.isMoving || dog.isTongueOut));
+        const isAlertResponse = Boolean(dog && typeof dog.isRespondingToAlert === 'function' && dog.isRespondingToAlert());
+
+        return Boolean(dog && (dog.isMoving || dog.isTongueOut || isAlertResponse));
     }
 
     refreshStatusPanel() {
@@ -2425,6 +2697,127 @@ export class Simulation extends Scene {
             this.statusPanel.update(panelData);
             this.updateActiveHighlightFromNodes(panelData.nodes);
         }
+    }
+
+    findClosestAvailableDog(cat, candidates) {
+        if (!cat || !Array.isArray(candidates) || candidates.length === 0) {
+            return null;
+        }
+
+        const targetPosition = this.grid
+            ? this.grid.tileToWorld(cat.tileX, cat.tileY)
+            : { x: cat.tileX, y: cat.tileY };
+        let closestDog = null;
+        let closestDistance = Number.POSITIVE_INFINITY;
+
+        candidates.forEach((dog) => {
+            if (!dog || typeof dog.computeAreaCenter !== 'function') {
+                return;
+            }
+
+            const dogCenter = dog.computeAreaCenter(dog.tileX, dog.tileY);
+            const distance = Phaser.Math.Distance.Between(targetPosition.x, targetPosition.y, dogCenter.x, dogCenter.y);
+
+            if (distance < closestDistance) {
+                closestDog = dog;
+                closestDistance = distance;
+            }
+        });
+
+        return closestDog;
+    }
+
+    manageDemoAlerts(time) {
+        if (!this.isDemoSimulation || this.cats.length === 0 || this.dogs.length === 0) {
+            return;
+        }
+
+        const timestamp = Number.isFinite(time) ? time : (this.time?.now || 0);
+        const availableDogs = this.dogs.filter((dog) => (
+            dog && typeof dog.isRespondingToAlert === 'function' && !dog.isRespondingToAlert()
+        ));
+
+        this.cats.forEach((cat) => {
+            if (!cat || typeof cat.hasAlert !== 'function') {
+                return;
+            }
+
+            if (!cat.hasAlert()) {
+                const responder = typeof cat.getAlertResponder === 'function' ? cat.getAlertResponder() : null;
+
+                if (responder && typeof responder.clearAlertTarget === 'function') {
+                    const cleared = responder.clearAlertTarget({ silent: true, time: timestamp });
+
+                    if (cleared && typeof responder.scheduleNextMoveCheck === 'function') {
+                        responder.scheduleNextMoveCheck(timestamp);
+                    }
+                }
+
+                if (typeof cat.clearAlertResponder === 'function') {
+                    cat.clearAlertResponder();
+                }
+
+                return;
+            }
+
+            const currentResponder = typeof cat.getAlertResponder === 'function' ? cat.getAlertResponder() : null;
+
+            if (
+                currentResponder &&
+                typeof currentResponder.isRespondingToAlert === 'function' &&
+                currentResponder.isRespondingToAlert() &&
+                currentResponder.alertTarget === cat
+            ) {
+                return;
+            }
+
+            if (currentResponder && typeof cat.clearAlertResponder === 'function') {
+                cat.clearAlertResponder();
+            }
+
+            const assignedDog = this.findClosestAvailableDog(cat, availableDogs);
+
+            if (!assignedDog) {
+                return;
+            }
+
+            if (typeof assignedDog.setAlertTarget === 'function') {
+                assignedDog.setAlertTarget(cat, timestamp);
+            }
+
+            if (typeof cat.assignAlertResponder === 'function') {
+                cat.assignAlertResponder(assignedDog);
+            }
+
+            const index = availableDogs.indexOf(assignedDog);
+
+            if (index >= 0) {
+                availableDogs.splice(index, 1);
+            }
+        });
+
+        this.dogs.forEach((dog) => {
+            if (!dog || typeof dog.isRespondingToAlert !== 'function' || !dog.isRespondingToAlert()) {
+                return;
+            }
+
+            const targetCat = dog.alertTarget;
+            const catHasAlert = targetCat && typeof targetCat.hasAlert === 'function'
+                ? targetCat.hasAlert()
+                : Boolean(targetCat?.alertDetails);
+
+            if (!catHasAlert) {
+                const cleared = dog.clearAlertTarget({ silent: true, time: timestamp });
+
+                if (cleared && typeof dog.scheduleNextMoveCheck === 'function') {
+                    dog.scheduleNextMoveCheck(timestamp);
+                }
+
+                if (targetCat && typeof targetCat.clearAlertResponder === 'function') {
+                    targetCat.clearAlertResponder(dog);
+                }
+            }
+        });
     }
 
     handleNodeHover(nodeData) {
@@ -2617,6 +3010,10 @@ export class Simulation extends Scene {
     }
 
     update(time) {
+        if (this.isDemoSimulation) {
+            this.manageDemoAlerts(time);
+        }
+
         this.cats.forEach((cat) => cat.update(time));
         this.dogs.forEach((dog) => dog.update(time, this.cats));
 
