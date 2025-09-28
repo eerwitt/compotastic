@@ -10,7 +10,6 @@
         "debugpy",
         "--listen",
         "5678",
-        "--wait-for-client",
         "-m",
         "uvicorn",
         "backend.api.app:app",
@@ -35,8 +34,8 @@
         ],
         "background": {
           "activeOnStart": true,
-          "beginsPattern": ".*",
-          "endsPattern": "Uvicorn running on"
+          "beginsPattern": "^INFO:.*Started server process",
+          "endsPattern": "^INFO:.*Application startup complete."
         }
       },
       "presentation": {
