@@ -6,10 +6,13 @@ const DEFAULT_CAT_COUNT = 10;
 const DEFAULT_DOG_COUNT = 1;
 
 const DOG_FONT_STYLE = { fontFamily: 'Courier', fontSize: 30, color: '#f5deb3ff', align: 'center', fontStyle: 'bold' };
+const DOG_ALERT_POINTER_STYLE = { fontFamily: 'Courier', fontSize: 24, color: '#00ff00', fontStyle: 'bold' };
 
 const CAT_FACE = '^.^';
 const CAT_ALERT_SYMBOL = '/!\\';
+const CAT_JOB_FACE = '^O^';
 const CAT_FONT_STYLE = { fontFamily: 'Courier', fontSize: 32, color: '#e27272ff', fontStyle: 'bold' };
+const CAT_JOB_COLOR = '#32cd32ff';
 const CAT_MODAL_FONT_STYLE = { fontFamily: 'Courier', fontSize: 20, color: '#f4e1c1ff', align: 'left' };
 const DOG_MODAL_FONT_STYLE = { fontFamily: 'Courier', fontSize: 20, color: '#f7f7dcff', align: 'left' };
 
@@ -295,6 +298,8 @@ class Cat {
         this.text.setOrigin(0.5, 0.5);
         this.text.setDepth(5);
         this.text.setInteractive({ useHandCursor: true });
+        this.defaultColor = CAT_FONT_STYLE.color;
+        this.text.setColor(this.defaultColor);
 
         const { sanitizedAttributes, alertDetails } = extractCatAlertDetails(attributes);
 
@@ -304,6 +309,8 @@ class Cat {
             CAT_ALERT_FLASH_INTERVAL_RANGE.min,
             CAT_ALERT_FLASH_INTERVAL_RANGE.max
         );
+        this.alertResponder = null;
+        this.alertHoldLogged = false;
 
         if (this.alertDetails) {
             this.isAlertSymbolVisible = true;
@@ -327,6 +334,9 @@ class Cat {
         this.tileY = tileY;
 
         this.nextLookTime = scene.time.now || 0;
+        if (this.hasAlert()) {
+            this.nextLookTime = Number.POSITIVE_INFINITY;
+        }
         this.isMoving = false;
         this.moveStartTime = 0;
         this.moveDuration = 0;
@@ -343,6 +353,7 @@ class Cat {
         this.isMouthOpen = false;
         this.mouthEndTime = 0;
         this.nextMouthOpenTime = scene.time.now || 0;
+        this.isPerformingJob = false;
 
         this.text.on('pointerover', this.showAttributesModal, this);
         this.text.on('pointerout', this.hideAttributesModal, this);
@@ -395,6 +406,10 @@ class Cat {
 
         if (this.hasAlert()) {
             lines.push(...this.getAlertModalLines());
+        }
+
+        if (this.isPerformingJob) {
+            lines.push('Status: Performing job');
         }
 
         const cpuLabel = typeof this.attributes.cpu === 'string' && this.attributes.cpu.trim().length > 0
@@ -465,11 +480,21 @@ class Cat {
     }
 
     scheduleNextBlink(time, options = {}) {
+        if (this.isPerformingJob) {
+            this.nextBlinkTime = Number.POSITIVE_INFINITY;
+            return;
+        }
+
         const { usePhaseOffset = false } = options;
         this.nextBlinkTime = time + getRandomEventDelay(CAT_BLINK_INTERVAL_RANGE, usePhaseOffset);
     }
 
     scheduleNextMouthOpen(time, options = {}) {
+        if (this.isPerformingJob) {
+            this.nextMouthOpenTime = Number.POSITIVE_INFINITY;
+            return;
+        }
+
         const { usePhaseOffset = false } = options;
         this.nextMouthOpenTime = time + getRandomEventDelay(CAT_MOUTH_INTERVAL_RANGE, usePhaseOffset);
     }
@@ -480,6 +505,12 @@ class Cat {
     }
 
     beginMouthOpen(time) {
+        if (this.isPerformingJob) {
+            this.isMouthOpen = true;
+            this.mouthEndTime = Number.POSITIVE_INFINITY;
+            return;
+        }
+
         this.isMouthOpen = true;
         this.mouthEndTime = time + CAT_MOUTH_OPEN_DURATION;
     }
@@ -487,12 +518,20 @@ class Cat {
     applyCurrentFace() {
         let targetFace = CAT_FACE;
 
-        if (this.hasAlert()) {
+        if (this.isPerformingJob) {
+            targetFace = CAT_JOB_FACE;
+        } else if (this.hasAlert()) {
             targetFace = this.isAlertSymbolVisible ? CAT_ALERT_SYMBOL : CAT_FACE;
         } else if (this.isBlinking) {
             targetFace = CAT_BLINK_FACE;
         } else if (this.isMouthOpen) {
             targetFace = CAT_MOUTH_FACE;
+        }
+
+        if (this.isPerformingJob) {
+            this.text.setColor(CAT_JOB_COLOR);
+        } else {
+            this.text.setColor(this.defaultColor);
         }
 
         if (targetFace !== this.currentFace) {
@@ -504,6 +543,14 @@ class Cat {
 
     updateFacialAnimations(time) {
         const currentTime = typeof time === 'number' ? time : 0;
+
+        if (this.isPerformingJob) {
+            this.isBlinking = false;
+            this.isMouthOpen = true;
+            this.isAlertSymbolVisible = false;
+            this.applyCurrentFace();
+            return;
+        }
 
         if (this.isBlinking && currentTime >= this.blinkEndTime) {
             this.isBlinking = false;
@@ -540,7 +587,16 @@ class Cat {
     }
 
     lookAround(time) {
-        if (this.isMoving) {
+        if (this.isMoving || this.isPerformingJob) {
+            return;
+        }
+
+        if (this.hasAlert()) {
+            if (!this.alertHoldLogged) {
+                this.recordMovementLog('Holding position due to active alert', time);
+                this.alertHoldLogged = true;
+            }
+            this.nextLookTime = Number.POSITIVE_INFINITY;
             return;
         }
 
@@ -598,6 +654,15 @@ class Cat {
     update(time) {
         this.updateFacialAnimations(time);
 
+        if (this.isPerformingJob) {
+            if (this.modal.visible) {
+                this.modal.setText(this.buildModalContent());
+                this.updateModalPosition();
+            }
+
+            return;
+        }
+
         if (this.isMoving) {
             const elapsed = time - this.moveStartTime;
             const progress = this.moveDuration > 0 ? Phaser.Math.Clamp(elapsed / this.moveDuration, 0, 1) : 1;
@@ -636,14 +701,106 @@ class Cat {
     }
 
     scheduleNextLook(time) {
+        if (this.isPerformingJob) {
+            this.nextLookTime = Number.POSITIVE_INFINITY;
+            return;
+        }
+
+        if (this.hasAlert()) {
+            this.nextLookTime = Number.POSITIVE_INFINITY;
+            return;
+        }
+
         this.nextLookTime = time + Phaser.Math.Between(LOOK_INTERVAL_RANGE.min, LOOK_INTERVAL_RANGE.max);
+    }
+
+    assignAlertResponder(dog) {
+        this.alertResponder = dog;
+    }
+
+    clearAlertResponder(dog = null) {
+        if (!dog || this.alertResponder === dog) {
+            this.alertResponder = null;
+        }
+    }
+
+    getAlertResponder() {
+        return this.alertResponder;
+    }
+
+    clearAlert(time) {
+        if (!this.hasAlert()) {
+            return;
+        }
+
+        this.alertDetails = null;
+        this.isAlertSymbolVisible = false;
+        this.nextAlertToggleTime = Number.POSITIVE_INFINITY;
+        this.currentFace = CAT_FACE;
+        this.text.setText(this.currentFace);
+        this.scaleToTile();
+        this.applyCurrentFace();
+        this.alertHoldLogged = false;
+        this.clearAlertResponder();
+
+        const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+        this.recordMovementLog('Alert cleared — resuming patrol', timestamp);
+        this.scheduleNextLook(timestamp);
+
+        if (this.modal.visible) {
+            this.modal.setText(this.buildModalContent());
+            this.updateModalPosition();
+        }
     }
 
     onGridLayoutChanged() {
         this.scaleToTile();
         this.setPosition(this.tileX, this.tileY);
         this.isMoving = false;
-        this.scheduleNextLook(this.scene.time.now || 0);
+        if (this.isPerformingJob) {
+            this.nextLookTime = Number.POSITIVE_INFINITY;
+        } else {
+            this.scheduleNextLook(this.scene.time.now || 0);
+        }
+        if (this.modal.visible) {
+            this.modal.setText(this.buildModalContent());
+            this.updateModalPosition();
+        }
+    }
+
+    beginRewardJob(time, rewardMarker = null) {
+        if (this.isPerformingJob) {
+            return;
+        }
+
+        const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+        const valueLabel = rewardMarker && Number.isFinite(rewardMarker.value)
+            ? `${rewardMarker.value >= 0 ? '+' : ''}${rewardMarker.value}`
+            : 'unknown';
+
+        this.isPerformingJob = true;
+        this.isMoving = false;
+        this.targetTileX = this.tileX;
+        this.targetTileY = this.tileY;
+        this.startPixelX = this.text.x;
+        this.startPixelY = this.text.y;
+        this.targetPixelX = this.text.x;
+        this.targetPixelY = this.text.y;
+        this.moveDuration = 0;
+        this.moveStartTime = timestamp;
+        this.nextLookTime = Number.POSITIVE_INFINITY;
+        this.isBlinking = false;
+        this.blinkEndTime = Number.POSITIVE_INFINITY;
+        this.nextBlinkTime = Number.POSITIVE_INFINITY;
+        this.isMouthOpen = true;
+        this.mouthEndTime = Number.POSITIVE_INFINITY;
+        this.nextMouthOpenTime = Number.POSITIVE_INFINITY;
+        this.applyCurrentFace();
+        this.recordMovementLog(
+            `Consuming reward (${valueLabel}) at (${this.tileX}, ${this.tileY})`,
+            timestamp
+        );
+
         if (this.modal.visible) {
             this.modal.setText(this.buildModalContent());
             this.updateModalPosition();
@@ -726,6 +883,12 @@ class Dog {
         this.tongueEndTime = 0;
         this.nextTongueTime = scene.time.now || 0;
         this.currentAscii = initialAscii;
+        this.alertTarget = null;
+        this.alertPointer = scene.add.text(0, 0, '', DOG_ALERT_POINTER_STYLE);
+        this.alertPointer.setOrigin(0.5, 0.5);
+        this.alertPointer.setDepth(6);
+        this.alertPointer.setVisible(false);
+        this.alertPathBlocked = false;
         this.nodeIdentifier = (typeof identifier === 'string' && identifier.trim().length > 0)
             ? identifier.trim()
             : null;
@@ -767,6 +930,10 @@ class Dog {
         this.targetPixelX = position.x;
         this.targetPixelY = position.y;
 
+        if (this.alertPointer.visible) {
+            this.alertPointer.setPosition(position.x, position.y);
+        }
+
         if (this.modal.visible) {
             this.updateModalPosition();
         }
@@ -797,7 +964,8 @@ class Dog {
         this.nextMoveCheckTime = time + Phaser.Math.Between(DOG_MOVE_INTERVAL_RANGE.min, DOG_MOVE_INTERVAL_RANGE.max);
     }
 
-    beginMovement(tileX, tileY, time) {
+    beginMovement(tileX, tileY, time, options = {}) {
+        const { reason = 'patrol', pointerDirection = null } = options;
         const targetPosition = this.computeAreaCenter(tileX, tileY);
 
         this.startPixelX = this.text.x;
@@ -817,10 +985,137 @@ class Dog {
         this.moveDuration = distance > 0 ? (distance / this.speed) * 1000 : 0;
         this.moveStartTime = time;
         this.isMoving = true;
-        this.recordMovementLog(
-            `Started patrol toward (${this.targetTileX}, ${this.targetTileY})`,
-            time
+        const logMessage = reason === 'alert'
+            ? `Moving to assist alert at (${this.targetTileX}, ${this.targetTileY})`
+            : `Started patrol toward (${this.targetTileX}, ${this.targetTileY})`;
+        this.recordMovementLog(logMessage, time);
+
+        if (reason === 'alert' && pointerDirection) {
+            this.showAlertPointer(pointerDirection);
+        } else if (reason !== 'alert') {
+            this.hideAlertPointer();
+        }
+    }
+
+    resolvePointerSymbol(direction) {
+        if (!direction || typeof direction !== 'object') {
+            return '->';
+        }
+
+        const { x = 0, y = 0 } = direction;
+
+        if (Math.abs(x) >= Math.abs(y)) {
+            if (x > 0) {
+                return '->';
+            }
+
+            if (x < 0) {
+                return '<-';
+            }
+        }
+
+        if (y < 0) {
+            return '^';
+        }
+
+        if (y > 0) {
+            return 'v';
+        }
+
+        return '->';
+    }
+
+    showAlertPointer(direction) {
+        const symbol = this.resolvePointerSymbol(direction);
+        this.alertPointer.setText(symbol);
+        this.alertPointer.setVisible(true);
+        this.alertPointer.setPosition(this.text.x, this.text.y);
+    }
+
+    hideAlertPointer() {
+        this.alertPointer.setVisible(false);
+    }
+
+    setAlertTarget(cat, time) {
+        if (this.alertTarget === cat) {
+            return;
+        }
+
+        const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+
+        if (this.alertTarget && typeof this.alertTarget.clearAlertResponder === 'function') {
+            this.alertTarget.clearAlertResponder(this);
+        }
+
+        this.alertTarget = cat || null;
+        this.alertPathBlocked = false;
+
+        if (this.alertTarget) {
+            this.recordMovementLog(
+                `Dispatched to alert at (${this.alertTarget.tileX}, ${this.alertTarget.tileY})`,
+                timestamp
+            );
+            this.nextMoveCheckTime = timestamp;
+        } else {
+            this.hideAlertPointer();
+        }
+    }
+
+    clearAlertTarget(options = {}) {
+        const { silent = false, time = null } = options;
+
+        if (!this.alertTarget) {
+            return false;
+        }
+
+        const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+
+        if (!silent) {
+            this.recordMovementLog('Standing down from alert response', timestamp);
+        }
+
+        if (typeof this.alertTarget.clearAlertResponder === 'function') {
+            this.alertTarget.clearAlertResponder(this);
+        }
+
+        this.alertTarget = null;
+        this.alertPathBlocked = false;
+        this.hideAlertPointer();
+        return true;
+    }
+
+    isRespondingToAlert() {
+        return Boolean(this.alertTarget);
+    }
+
+    coversTile(tileX, tileY) {
+        return (
+            tileX >= this.tileX &&
+            tileY >= this.tileY &&
+            tileX < this.tileX + this.tileWidth &&
+            tileY < this.tileY + this.tileHeight
         );
+    }
+
+    resolveAlert(time) {
+        if (!this.alertTarget) {
+            return;
+        }
+
+        const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+        const cat = this.alertTarget;
+
+        this.recordMovementLog(
+            `Alert resolved for (${cat.tileX}, ${cat.tileY})`,
+            timestamp
+        );
+
+        if (typeof cat.clearAlert === 'function') {
+            cat.clearAlert(timestamp);
+        }
+
+        this.clearAlertTarget({ silent: true, time: timestamp });
+        this.scheduleNextMoveCheck(timestamp);
     }
 
     buildModalContent() {
@@ -969,6 +1264,25 @@ class Dog {
     update(time, cats) {
         this.updateFacialAnimations(time);
 
+        let hasActiveAlert = false;
+
+        if (this.isRespondingToAlert() && this.alertTarget) {
+            const catHasAlert = typeof this.alertTarget.hasAlert === 'function'
+                ? this.alertTarget.hasAlert()
+                : Boolean(this.alertTarget.alertDetails);
+
+            hasActiveAlert = catHasAlert;
+
+            if (!catHasAlert) {
+                const cleared = this.clearAlertTarget({ silent: true, time });
+                if (cleared) {
+                    const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+                    this.scheduleNextMoveCheck(timestamp);
+                }
+                hasActiveAlert = false;
+            }
+        }
+
         if (this.isMoving) {
             const elapsed = time - this.moveStartTime;
             const progress = this.moveDuration > 0 ? Phaser.Math.Clamp(elapsed / this.moveDuration, 0, 1) : 1;
@@ -978,6 +1292,10 @@ class Dog {
 
             this.text.setPosition(currentX, currentY);
 
+            if (this.alertPointer.visible) {
+                this.alertPointer.setPosition(currentX, currentY);
+            }
+
             if (this.modal.visible) {
                 this.modal.setText(this.buildModalContent());
                 this.updateModalPosition();
@@ -986,19 +1304,57 @@ class Dog {
             if (progress >= 1) {
                 this.isMoving = false;
                 this.setPosition(this.targetTileX, this.targetTileY);
-                this.scheduleNextMoveCheck(time);
                 this.recordMovementLog(
                     `Arrived at (${this.tileX}, ${this.tileY})`,
                     time
                 );
+
+                if (
+                    hasActiveAlert &&
+                    this.alertTarget &&
+                    this.coversTile(this.alertTarget.tileX, this.alertTarget.tileY)
+                ) {
+                    this.resolveAlert(time);
+                } else if (this.isRespondingToAlert() && hasActiveAlert) {
+                    this.hideAlertPointer();
+                } else if (!this.isRespondingToAlert()) {
+                    this.scheduleNextMoveCheck(time);
+                }
             }
 
             return;
         }
 
+        if (this.alertPointer.visible && !hasActiveAlert) {
+            this.hideAlertPointer();
+        }
+
         if (this.modal.visible) {
             this.modal.setText(this.buildModalContent());
             this.updateModalPosition();
+        }
+
+        if (hasActiveAlert && this.alertTarget) {
+            const move = this.determineStepToward(this.alertTarget);
+
+            if (!move) {
+                if (!this.alertPathBlocked) {
+                    this.recordMovementLog('Alert path blocked — holding position', time);
+                    this.alertPathBlocked = true;
+                }
+
+                this.hideAlertPointer();
+
+                return;
+            }
+
+            this.alertPathBlocked = false;
+            this.beginMovement(this.tileX + move.x, this.tileY + move.y, time, {
+                reason: 'alert',
+                pointerDirection: move
+            });
+
+            return;
         }
 
         if (time < this.nextMoveCheckTime) {
@@ -1047,6 +1403,7 @@ class Dog {
     destroy() {
         this.text.destroy();
         this.modal.destroy();
+        this.alertPointer.destroy();
     }
 
     recordMovementLog(message, time) {
@@ -2253,6 +2610,10 @@ export class Simulation extends Scene {
             return 'ALERT — Condition detected';
         }
 
+        if (cat.isPerformingJob) {
+            return 'Performing job';
+        }
+
         if (cat.isMoving) {
             return 'Relocating across mesh';
         }
@@ -2271,6 +2632,17 @@ export class Simulation extends Scene {
     determineDogStatus(dog) {
         if (!dog) {
             return 'Idle';
+        }
+
+        if (typeof dog.isRespondingToAlert === 'function' && dog.isRespondingToAlert()) {
+            const targetCat = dog.alertTarget;
+            const fallbackLabel = targetCat
+                ? `cat at (${targetCat.tileX}, ${targetCat.tileY})`
+                : 'alerted cat';
+            const targetLabel = targetCat && typeof targetCat.nodeIdentifier === 'string'
+                ? targetCat.nodeIdentifier
+                : fallbackLabel;
+            return `Responding to ${targetLabel}`;
         }
 
         if (dog.isMoving) {
@@ -2295,7 +2667,9 @@ export class Simulation extends Scene {
     }
 
     isDogActive(dog) {
-        return Boolean(dog && (dog.isMoving || dog.isTongueOut));
+        const isAlertResponse = Boolean(dog && typeof dog.isRespondingToAlert === 'function' && dog.isRespondingToAlert());
+
+        return Boolean(dog && (dog.isMoving || dog.isTongueOut || isAlertResponse));
     }
 
     refreshStatusPanel() {
@@ -2323,6 +2697,127 @@ export class Simulation extends Scene {
             this.statusPanel.update(panelData);
             this.updateActiveHighlightFromNodes(panelData.nodes);
         }
+    }
+
+    findClosestAvailableDog(cat, candidates) {
+        if (!cat || !Array.isArray(candidates) || candidates.length === 0) {
+            return null;
+        }
+
+        const targetPosition = this.grid
+            ? this.grid.tileToWorld(cat.tileX, cat.tileY)
+            : { x: cat.tileX, y: cat.tileY };
+        let closestDog = null;
+        let closestDistance = Number.POSITIVE_INFINITY;
+
+        candidates.forEach((dog) => {
+            if (!dog || typeof dog.computeAreaCenter !== 'function') {
+                return;
+            }
+
+            const dogCenter = dog.computeAreaCenter(dog.tileX, dog.tileY);
+            const distance = Phaser.Math.Distance.Between(targetPosition.x, targetPosition.y, dogCenter.x, dogCenter.y);
+
+            if (distance < closestDistance) {
+                closestDog = dog;
+                closestDistance = distance;
+            }
+        });
+
+        return closestDog;
+    }
+
+    manageDemoAlerts(time) {
+        if (!this.isDemoSimulation || this.cats.length === 0 || this.dogs.length === 0) {
+            return;
+        }
+
+        const timestamp = Number.isFinite(time) ? time : (this.time?.now || 0);
+        const availableDogs = this.dogs.filter((dog) => (
+            dog && typeof dog.isRespondingToAlert === 'function' && !dog.isRespondingToAlert()
+        ));
+
+        this.cats.forEach((cat) => {
+            if (!cat || typeof cat.hasAlert !== 'function') {
+                return;
+            }
+
+            if (!cat.hasAlert()) {
+                const responder = typeof cat.getAlertResponder === 'function' ? cat.getAlertResponder() : null;
+
+                if (responder && typeof responder.clearAlertTarget === 'function') {
+                    const cleared = responder.clearAlertTarget({ silent: true, time: timestamp });
+
+                    if (cleared && typeof responder.scheduleNextMoveCheck === 'function') {
+                        responder.scheduleNextMoveCheck(timestamp);
+                    }
+                }
+
+                if (typeof cat.clearAlertResponder === 'function') {
+                    cat.clearAlertResponder();
+                }
+
+                return;
+            }
+
+            const currentResponder = typeof cat.getAlertResponder === 'function' ? cat.getAlertResponder() : null;
+
+            if (
+                currentResponder &&
+                typeof currentResponder.isRespondingToAlert === 'function' &&
+                currentResponder.isRespondingToAlert() &&
+                currentResponder.alertTarget === cat
+            ) {
+                return;
+            }
+
+            if (currentResponder && typeof cat.clearAlertResponder === 'function') {
+                cat.clearAlertResponder();
+            }
+
+            const assignedDog = this.findClosestAvailableDog(cat, availableDogs);
+
+            if (!assignedDog) {
+                return;
+            }
+
+            if (typeof assignedDog.setAlertTarget === 'function') {
+                assignedDog.setAlertTarget(cat, timestamp);
+            }
+
+            if (typeof cat.assignAlertResponder === 'function') {
+                cat.assignAlertResponder(assignedDog);
+            }
+
+            const index = availableDogs.indexOf(assignedDog);
+
+            if (index >= 0) {
+                availableDogs.splice(index, 1);
+            }
+        });
+
+        this.dogs.forEach((dog) => {
+            if (!dog || typeof dog.isRespondingToAlert !== 'function' || !dog.isRespondingToAlert()) {
+                return;
+            }
+
+            const targetCat = dog.alertTarget;
+            const catHasAlert = targetCat && typeof targetCat.hasAlert === 'function'
+                ? targetCat.hasAlert()
+                : Boolean(targetCat?.alertDetails);
+
+            if (!catHasAlert) {
+                const cleared = dog.clearAlertTarget({ silent: true, time: timestamp });
+
+                if (cleared && typeof dog.scheduleNextMoveCheck === 'function') {
+                    dog.scheduleNextMoveCheck(timestamp);
+                }
+
+                if (targetCat && typeof targetCat.clearAlertResponder === 'function') {
+                    targetCat.clearAlertResponder(dog);
+                }
+            }
+        });
     }
 
     handleNodeHover(nodeData) {
@@ -2490,40 +2985,39 @@ export class Simulation extends Scene {
         this.applyActiveHighlight();
     }
 
-    handleDemoRewardConsumption() {
-        if (!this.isDemoSimulation || this.rewardMarkers.length === 0 || this.cats.length === 0) {
+    handleRewardConsumption(time) {
+        if (this.rewardMarkers.length === 0 || this.cats.length === 0) {
             return;
         }
 
-        const occupiedTiles = new Set(
-            this.cats.map((cat) => `${cat.tileX},${cat.tileY}`)
-        );
-        const consumedMarkers = [];
+        const remainingMarkers = [];
 
-        this.rewardMarkers = this.rewardMarkers.filter((marker) => {
-            const locationKey = `${marker.tileX},${marker.tileY}`;
+        this.rewardMarkers.forEach((marker) => {
+            const matchingCat = this.cats.find((cat) => (
+                cat.tileX === marker.tileX &&
+                cat.tileY === marker.tileY
+            ));
 
-            if (occupiedTiles.has(locationKey)) {
-                consumedMarkers.push(marker);
+            if (matchingCat && typeof matchingCat.beginRewardJob === 'function') {
+                matchingCat.beginRewardJob(time, marker);
                 marker.destroy();
-                return false;
+            } else {
+                remainingMarkers.push(marker);
             }
-
-            return true;
         });
 
-        consumedMarkers.forEach((marker) => {
-            this.spawnDemoReward(marker.value);
-        });
+        this.rewardMarkers = remainingMarkers;
     }
 
     update(time) {
+        if (this.isDemoSimulation) {
+            this.manageDemoAlerts(time);
+        }
+
         this.cats.forEach((cat) => cat.update(time));
         this.dogs.forEach((dog) => dog.update(time, this.cats));
 
-        if (this.isDemoSimulation) {
-            this.handleDemoRewardConsumption();
-        }
+        this.handleRewardConsumption(time);
 
         if (typeof time === 'number' && time >= this.nextStatusPanelUpdateTime) {
             this.refreshStatusPanel();
