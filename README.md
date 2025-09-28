@@ -1,26 +1,30 @@
 # Compotastic: Mesh-Native Compute Layer for Meshtastic Swarms
 
-Compotastic began as a hackathon exploration of how ultra-low-power, Meshtastic-enabled devices could pool compute for robotic field work. The repository now hosts a **simulation-only** stack: a Python backend and a Phaser UI mirror the behaviours of deployed nodes so developers can debug coordination logic before touching firmware on the real Q-learning mesh cats and the Compote service dog. [F:backend/README.md†L1-L24](backend/README.md) [F:ui/README.md†L1-L10](ui/README.md)
+![Simulation Demo](./simulation-background.png "Simulation Demo")
+
+Compotastic is a hackathon exploration of how ultra-low-power, Meshtastic-enabled devices could pool compute for robotic field work. The repository hosts a **simulation-only** stack: a Python backend and a Phaser UI mirror the behaviours of deployed nodes so developers can debug coordination logic before touching firmware on the real Q-learning mesh cats and the Compote service dog. [Simulation AI](backend/README.md) [Simulation UI](ui/README.md)
+
+There is also the logic to run the commands over the Mesh and connect it to the backend, this works without flashing firmware and can be found in [mesh_connector](mesh_connector/README.md)
 
 ## How the demo stack works
 
-- **Protocol simulation backend** – The FastAPI service under `backend/` drives a grid-world environment, synthesises node telemetry, and manages reinforcement-learning state transitions that stand in for the behaviour of on-device agents. [F:backend/api/app.py†L1-L36](backend/api/app.py) [F:backend/simulation/runtime.py†L1-L136](backend/simulation/runtime.py)
-- **Q-learning agents** – Each simulated node owns a compact integer-based Q-table, allowing the runtime to practise policy updates and reward distribution exactly as the embedded firmware will apply them when Compote ferries new experience across the mesh. [F:backend/simulation/logic/__init__.py†L380-L468](backend/simulation/logic/__init__.py) [F:backend/simulation/runtime.py†L98-L181](backend/simulation/runtime.py)
-- **Meshtastic connector prototype** – The `mesh_connector/` package adds a protobuf envelope (`AddressableMeshData`) that piggybacks on Meshtastic packets to move bin-packed state replicas and coordination requests with minimal airtime. [F:mesh_connector/protos/mesh_connector.proto†L1-L49](mesh_connector/protos/mesh_connector.proto)
-- **Capability beacons** – Every simulated node advertises its accelerators, model support, and energy status through BLE GATT metadata so peers can negotiate workloads and Compote can prioritise which partner to aid. [F:backend/README.md†L5-L24](backend/README.md)
-- **Web-based visualiser** – The Phaser/Vite UI consumes websocket snapshots to animate the grid, making it easier to narrate how the dogs push firmware and how cats resume their jobs once updated policies arrive. [F:ui/README.md†L1-L10](ui/README.md) [F:backend/simulation/runtime.py†L137-L220](backend/simulation/runtime.py)
+- **Protocol simulation backend** – The FastAPI service under `backend/` drives a grid-world environment, synthesises node telemetry, and manages reinforcement-learning state transitions that stand in for the behaviour of on-device agents. [backend/api/app.py](backend/api/app.py) [backend/simulation/runtime.py](backend/simulation/runtime.py)
+- **Q-learning agents** – Each simulated node owns a compact integer-based Q-table, allowing the runtime to practise policy updates and reward distribution exactly as the embedded firmware will apply them when Compote ferries new experience across the mesh. [backend/simulation/logic/init.py](backend/simulation/logic/__init__.py) [backend/simulation/runtime.py](backend/simulation/runtime.py)
+- **Meshtastic connector prototype** – The `mesh_connector/` package adds a protobuf envelope (`AddressableMeshData`) that piggybacks on Meshtastic packets to move bin-packed state replicas and coordination requests with minimal airtime. [mesh_connector/protos/mesh_connector.proto](mesh_connector/protos/mesh_connector.proto)
+- **Capability beacons** – Every simulated node advertises its accelerators, model support, and energy status through BLE GATT metadata so peers can negotiate workloads and Compote can prioritise which partner to aid. [backend/README.md](backend/README.md)
+- **Web-based visualiser** – The Phaser/Vite UI consumes websocket snapshots to animate the grid, making it easier to narrate how the dogs push firmware and how cats resume their jobs once updated policies arrive. [ui/README.md](ui/README.md) [backend/simulation/runtime.py](backend/simulation/runtime.py)
 
 Together, these components illustrate how the real deployment will coordinate Bluetooth and mesh radios without risking physical hardware during rapid iteration.
 
 ## Meshtastic integration goals
 
-- **Compotastic protobuf extension** – `StateUpdate` frames align with the `GridWorldEnvironment.step` tuple, letting embedded learners apply the same compressed updates when they receive deltas over Meshtastic or from Compote directly. [F:mesh_connector/protos/mesh_connector.proto†L31-L61](mesh_connector/protos/mesh_connector.proto) [F:backend/simulation/logic/__init__.py†L360-L420](backend/simulation/logic/__init__.py)
-- **State replication & job signalling** – The connector binds source/destination addresses and sequence IDs so mesh nodes can deduplicate packets, react to compute help requests, and merge Q-learning tables even when connectivity is intermittent. [F:mesh_connector/protos/mesh_connector.proto†L14-L43](mesh_connector/protos/mesh_connector.proto) [F:backend/simulation/runtime.py†L221-L280](backend/simulation/runtime.py)
-- **GATT for capability discovery** – Metadata broadcasts over BLE advertise GPU/NPU availability, firmware versions, and power budget, giving Compote the context it needs before it attempts an OTA push. [F:backend/README.md†L5-L24](backend/README.md)
+- **Compotastic protobuf extension** – `StateUpdate` frames align with the `GridWorldEnvironment.step` tuple, letting embedded learners apply the same compressed updates when they receive deltas over Meshtastic or from Compote directly. [mesh_connector/protos/mesh_connector.proto](mesh_connector/protos/mesh_connector.proto) [backend/simulation/logic/init.py](backend/simulation/logic/__init__.py)
+- **State replication & job signalling** – The connector binds source/destination addresses and sequence IDs so mesh nodes can deduplicate packets, react to compute help requests, and merge Q-learning tables even when connectivity is intermittent. [mesh_connector/protos/mesh_connector.proto](mesh_connector/protos/mesh_connector.proto) [backend/simulation/runtime.py](backend/simulation/runtime.py)
+- **GATT for capability discovery** – Metadata broadcasts over BLE advertise GPU/NPU availability, firmware versions, and power budget, giving Compote the context it needs before it attempts an OTA push. [backend/README.md](backend/README.md)
 
 ### Snapshot: compute triage on the mesh
 
-```
+```txt
 +-----------------+-----------------+-----------------+-----------------+
 | Node A (Cat-07) | Node B (Dog-02) | Node C (Cat-11) | Node D (Cat-04) |
 |-----------------|-----------------|-----------------|-----------------|
@@ -36,11 +40,11 @@ Together, these components illustrate how the real deployment will coordinate Bl
 +-----------------+-----------------+-----------------+-----------------+
 ```
 
-The ASCII grid mirrors the runtime telemetry: Cat-07 publishes a `NEEDS compute assist` advertisement through the protobuf envelope, Dog-02 acknowledges over Meshtastic before navigating via BLE ranging to perform a Q-table merge, while Cat-11 keeps wandering for weak-signal peers and Cat-04 stays on task sampling soil moisture. This is the same flow Compote will orchestrate on-device once firmware promotion moves beyond the simulator. [F:backend/simulation/runtime.py†L137-L220](backend/simulation/runtime.py) [F:mesh_connector/protos/mesh_connector.proto†L14-L49](mesh_connector/protos/mesh_connector.proto)
+The ASCII grid mirrors the runtime telemetry: Cat-07 publishes a `NEEDS compute assist` advertisement through the protobuf envelope, Dog-02 acknowledges over Meshtastic before navigating via BLE ranging to perform a Q-table merge, while Cat-11 keeps wandering for weak-signal peers and Cat-04 stays on task sampling soil moisture. This is the same flow Compote will orchestrate on-device once firmware promotion moves beyond the simulator. [backend/simulation/runtime.py](backend/simulation/runtime.py) [mesh_connector/protos/mesh_connector.proto](mesh_connector/protos/mesh_connector.proto)
 
 Top-down situational map:
 
-```
+```txt
             +-----------+                      +-----------+
             | Cat-11    |                      | Cat-04    |
             | Wander    |                      | Task Soil |
