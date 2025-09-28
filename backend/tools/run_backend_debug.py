@@ -23,7 +23,7 @@ _LOGGER = logging.getLogger("backend.debug")
 
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 5678
-UVICORN_APP = "backend.api.app:app"
+UVICORN_APP = "../api.app:app"
 UVICORN_HOST = "127.0.0.1"
 UVICORN_PORT = 8001
 PID_FILE = Path(__file__).resolve().parents[2] / ".vscode" / "backend-debug.pid"
