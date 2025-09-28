@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import random
 import sys
@@ -12,6 +13,8 @@ from pathlib import Path
 from typing import Iterable, Iterator, List, Optional, Tuple
 
 from google.protobuf.json_format import MessageToDict
+from bleak import BleakClient
+from meshtastic.ble_interface import BLEClient as MeshtasticBLEClient
 from meshtastic.ble_interface import BLEDevice, BLEInterface
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +39,14 @@ from mesh_connector.protos import AddressableMeshData, StateUpdate
 LOGGER_NAME = "mesh_connector.main"
 DEFAULT_LOG_LEVEL = "INFO"
 LOG_LEVELS = ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
+
+OTA_SERVICE_UUID = "4FAFC201-1FB5-459E-8FCC-C5C9C331914B"
+OTA_DATA_CHARACTERISTIC_UUID = "62EC0272-3EC5-11EB-B378-0242AC130005"
+OTA_ACK_CHARACTERISTIC_UUID = "62EC0272-3EC5-11EB-B378-0242AC130003"
+OTA_CHUNK_SIZE = 400
+OTA_SCAN_TIMEOUT_SECONDS = 60.0
+OTA_DISCOVERY_WINDOW_SECONDS = 6.0
+OTA_ACK_TIMEOUT_SECONDS = 10.0
 
 PROTOCOL_VERSION = 1
 APPLICATION_ID = 0x434F4D50  # ASCII 'COMP'
@@ -72,6 +83,15 @@ def parse_arguments() -> argparse.Namespace:
         default=DEFAULT_LOG_LEVEL,
         choices=LOG_LEVELS,
         help="Logging verbosity for the utility output.",
+    )
+    parser.add_argument(
+        "--firmware-path",
+        dest="firmware_path",
+        type=Path,
+        help=(
+            "Optional path to a Meshtastic firmware binary to install over BLE. "
+            "When omitted the utility will not attempt an OTA firmware update."
+        ),
     )
     return parser.parse_args()
 
@@ -112,7 +132,12 @@ def list_available_devices(logger: logging.Logger) -> None:
         log_device_metadata(logger, device_metadata)
 
 
-def inspect_device(logger: logging.Logger, node_identifier: str) -> None:
+def inspect_device(
+    logger: logging.Logger,
+    node_identifier: str,
+    *,
+    firmware_path: Optional[Path] = None,
+) -> None:
     """Connect to a specific Meshtastic node and log device metadata."""
     logger.info("Connecting to Meshtastic device '%s' over BLE...", node_identifier)
     with ExitStack() as stack:
@@ -141,7 +166,10 @@ def inspect_device(logger: logging.Logger, node_identifier: str) -> None:
         else:
             logger.info("No metadata was returned by the device.")
 
-        stream_state_updates(interface, logger)
+        if firmware_path is not None:
+            push_firmware_update(interface, logger, firmware_path)
+        else:
+            stream_state_updates(interface, logger)
 
 
 def stream_state_updates(
@@ -227,6 +255,196 @@ def stream_state_updates(
         updates_sent,
         total_bytes,
     )
+
+
+def push_firmware_update(
+    interface: BLEInterface,
+    logger: logging.Logger,
+    firmware_path: Path,
+) -> None:
+    """Transfer a firmware image to the connected node over BLE OTA."""
+
+    if firmware_path.suffix.lower() != ".bin":
+        logger.warning(
+            "Firmware path '%s' does not look like a binary image; continuing regardless.",
+            firmware_path,
+        )
+
+    if not firmware_path.exists() or not firmware_path.is_file():
+        logger.error("Firmware path '%s' does not exist or is not a file.", firmware_path)
+        return
+
+    firmware_bytes = firmware_path.read_bytes()
+    if not firmware_bytes:
+        logger.error("Firmware file '%s' is empty; aborting OTA update.", firmware_path)
+        return
+
+    ble_client = getattr(interface, "client", None)
+    if ble_client is None or not hasattr(ble_client, "bleak_client"):
+        logger.error("BLE client is unavailable; cannot start firmware update.")
+        return
+
+    device_address = getattr(ble_client.bleak_client, "address", None)
+    if not device_address:
+        logger.error("Unable to determine BLE address for connected node.")
+        return
+
+    logger.info(
+        "Preparing to transfer %s bytes of firmware from '%s' to device %s.",
+        len(firmware_bytes),
+        firmware_path,
+        device_address,
+    )
+
+    try:
+        interface.localNode.rebootOTA(1)
+    except Exception as exc:  # pragma: no cover - depends on runtime BLE stack
+        logger.error("Failed to request OTA reboot: %s", exc)
+        return
+
+    logger.info("Waiting for device to reboot into OTA loader...")
+    try:
+        interface.close()
+    except Exception as exc:  # pragma: no cover - depends on runtime BLE stack
+        logger.warning("Error while closing BLE interface prior to OTA: %s", exc)
+
+    ota_device = _discover_ota_peripheral(device_address, logger)
+    if ota_device is None:
+        logger.error(
+            "Timed out waiting for OTA loader to advertise for device %s.",
+            device_address,
+        )
+        return
+
+    try:
+        _transfer_firmware(ota_device.address, firmware_bytes, logger)
+    except Exception as exc:  # pragma: no cover - depends on runtime BLE stack
+        logger.error("Firmware transfer failed: %s", exc)
+        return
+
+    logger.info(
+        "Firmware image transfer complete. The device will reboot into the main firmware once flashing finishes."
+    )
+
+
+def _discover_ota_peripheral(
+    original_address: str,
+    logger: logging.Logger,
+) -> Optional[BLEDevice]:
+    """Locate the OTA loader peripheral that advertises the firmware service."""
+
+    target_address = _normalize_ble_address(original_address)
+    deadline = time.monotonic() + OTA_SCAN_TIMEOUT_SECONDS
+    discovered: Optional[BLEDevice] = None
+
+    while time.monotonic() < deadline:
+        try:
+            with MeshtasticBLEClient() as client:
+                response = client.discover(
+                    timeout=OTA_DISCOVERY_WINDOW_SECONDS,
+                    return_adv=True,
+                    service_uuids=[OTA_SERVICE_UUID],
+                )
+        except Exception as exc:  # pragma: no cover - depends on OS BLE stack
+            logger.warning("BLE scan for OTA loader failed: %s", exc)
+            time.sleep(2.0)
+            continue
+
+        for device, _adv in response.values():
+            normalized = _normalize_ble_address(device.address or "")
+            if target_address and normalized == target_address:
+                logger.info(
+                    "Located OTA loader for device %s at address %s.",
+                    original_address,
+                    device.address,
+                )
+                return device
+            if discovered is None:
+                discovered = device
+
+        if discovered is not None:
+            logger.info(
+                "Using OTA loader at address %s (original device address %s).",
+                discovered.address,
+                original_address,
+            )
+            return discovered
+
+        logger.debug("OTA loader not yet advertising; retrying scan.")
+        time.sleep(2.0)
+
+    return None
+
+
+def _transfer_firmware(address: str, firmware_bytes: bytes, logger: logging.Logger) -> None:
+    """Send the firmware bytes to the OTA loader over BLE."""
+
+    async def _async_transfer() -> None:
+        ack_event = asyncio.Event()
+
+        def _notification_handler(_handle: int, data: bytes) -> None:
+            logger.debug("Received OTA acknowledgement: %s", data.hex())
+            ack_event.set()
+
+        async with BleakClient(address) as client:
+            services = await client.get_services()
+            available_characteristics = {
+                characteristic.uuid.lower()
+                for service in services
+                for characteristic in service.characteristics
+            }
+
+            if OTA_DATA_CHARACTERISTIC_UUID.lower() not in available_characteristics:
+                raise RuntimeError(
+                    "OTA data characteristic is not exposed by the connected peripheral."
+                )
+
+            await client.start_notify(OTA_ACK_CHARACTERISTIC_UUID, _notification_handler)
+            await client.write_gatt_char(
+                OTA_DATA_CHARACTERISTIC_UUID,
+                f"OTA_SIZE:{len(firmware_bytes)}".encode("ascii"),
+                response=True,
+            )
+
+            await asyncio.sleep(0.5)
+
+            total = len(firmware_bytes)
+            sent = 0
+
+            for chunk_index, start in enumerate(range(0, total, OTA_CHUNK_SIZE), start=1):
+                chunk = firmware_bytes[start : start + OTA_CHUNK_SIZE]
+                ack_event.clear()
+                await client.write_gatt_char(
+                    OTA_DATA_CHARACTERISTIC_UUID,
+                    chunk,
+                    response=False,
+                )
+                try:
+                    await asyncio.wait_for(ack_event.wait(), timeout=OTA_ACK_TIMEOUT_SECONDS)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Did not receive OTA acknowledgement after chunk %s; continuing.",
+                        chunk_index,
+                    )
+                sent += len(chunk)
+                percent = (sent / total) * 100.0
+                logger.info(
+                    "Transferred %s/%s bytes (%.1f%%) to OTA loader.",
+                    sent,
+                    total,
+                    percent,
+                )
+
+            logger.info("All firmware chunks transmitted; waiting for device to finalise flashing.")
+            await asyncio.sleep(5.0)
+
+    asyncio.run(_async_transfer())
+
+
+def _normalize_ble_address(address: str) -> str:
+    """Return a normalised BLE address string for comparison purposes."""
+
+    return address.replace("-", "").replace("_", "").replace(":", "").lower()
 
 
 def _generate_state_updates(
@@ -394,8 +612,10 @@ def main() -> None:
     if should_list:
         list_available_devices(logger)
 
+    firmware_path = args.firmware_path.expanduser() if args.firmware_path else None
+
     if args.node_id:
-        inspect_device(logger, args.node_id)
+        inspect_device(logger, args.node_id, firmware_path=firmware_path)
 
 
 if __name__ == "__main__":
