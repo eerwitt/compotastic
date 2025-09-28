@@ -10,7 +10,8 @@
         "port": 5678
       },
       "justMyCode": true,
-      "preLaunchTask": "backend: run with debugpy"
+      "preLaunchTask": "backend: run with debugpy",
+      "postDebugTask": "backend: stop debugpy"
     }
   ]
 }

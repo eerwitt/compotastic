@@ -6,17 +6,7 @@
       "type": "shell",
       "command": "python",
       "args": [
-        "-m",
-        "debugpy",
-        "--listen",
-        "5678",
-        "-m",
-        "uvicorn",
-        "backend.api.app:app",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "8001"
+        "backend/tools/run_backend_debug.py"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
@@ -34,8 +24,8 @@
         ],
         "background": {
           "activeOnStart": true,
-          "beginsPattern": "^INFO:.*Started server process",
-          "endsPattern": "^INFO:.*Application startup complete."
+          "beginsPattern": "^Starting backend debug server",
+          "endsPattern": "^Waiting for debugger to attach on 127\\.0\\.0\\.1:5678$"
         }
       },
       "presentation": {
@@ -46,6 +36,18 @@
         "showReuseMessage": true,
         "clear": false
       }
+    },
+    {
+      "label": "backend: stop debugpy",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "backend/tools/stop_backend_debug.py"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
     }
   ]
 }
