@@ -4,7 +4,8 @@
 
 Compotastic is a hackathon exploration of how ultra-low-power, Meshtastic-enabled devices could pool compute for robotic field work. The repository hosts a **simulation-only** stack: a Python backend and a Phaser UI mirror the behaviours of deployed nodes so developers can debug coordination logic before touching firmware on the real Q-learning mesh cats and the Compote service dog. [Simulation AI](backend/README.md) [Simulation UI](ui/README.md)
 
-[![Watch the Compotastic demo on YouTube](https://img.youtube.com/vi/E6jJL1MHRHc/0.jpg)](https://youtu.be/E6jJL1MHRHc)
+[![Presentation on YouTube](https://img.youtube.com/vi/E6jJL1MHRHc/0.jpg)](https://youtu.be/E6jJL1MHRHc)
+
 
 There is also the logic to run the commands over the Mesh and connect it to the backend, this works without flashing firmware and can be found in [mesh_connector](mesh_connector/README.md)
 
