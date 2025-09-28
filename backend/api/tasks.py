@@ -332,6 +332,10 @@ class OpenAIImageProcessingService:
         self._log.debug("Image upload complete for file %s (id=%s)", payload.filename, upload.id)
 
         self._log.debug("Submitting response request to model '%s'", model)
+        metadata["tileX"] = str(
+            metadata.get("tileX", metadata.get("tile_x", metadata.get("x", ""))))
+        metadata["tileY"] = str(
+            metadata.get("tileY", metadata.get("tile_y", metadata.get("y", ""))))
         response = await client.responses.create(
             model=model,
             input=[
