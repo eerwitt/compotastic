@@ -1,0 +1,47 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "backend: run with debugpy",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-m",
+        "debugpy",
+        "--listen",
+        "5678",
+        "--wait-for-client",
+        "-m",
+        "uvicorn",
+        "backend.api.app:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": [
+        {
+          "owner": "python",
+          "pattern": [],
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": ".*",
+            "endsPattern": "Uvicorn running on"
+          }
+        }
+      ],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      }
+    }
+  ]
+}
