@@ -69,6 +69,7 @@ const DOG_EYES_OPEN = 'o.o';
 const DOG_EYES_BLINK = '-.-';
 const DOG_MOUTH_IDLE = '^';
 const DOG_MOUTH_TONGUE = 'U';
+const DOG_ASSIST_ASCII = '  +  \n +++ \n+++++\n +++ \n  +  ';
 const CAT_BLINK_FACE = '-.-';
 const CAT_MOUTH_FACE = '^o^';
 
@@ -892,6 +893,11 @@ class Dog {
         this.nodeIdentifier = (typeof identifier === 'string' && identifier.trim().length > 0)
             ? identifier.trim()
             : null;
+        this.currentMoveReason = null;
+        this.currentTargetCat = null;
+        this.isAssisting = false;
+        this.assistTarget = null;
+        this.assistEndTime = 0;
 
         this.text.on('pointerover', this.showAttributesModal, this);
         this.text.on('pointerout', this.hideAttributesModal, this);
@@ -930,9 +936,7 @@ class Dog {
         this.targetPixelX = position.x;
         this.targetPixelY = position.y;
 
-        if (this.alertPointer.visible) {
-            this.alertPointer.setPosition(position.x, position.y);
-        }
+        this.updateDirectionPointerPosition(position.x, position.y);
 
         if (this.modal.visible) {
             this.updateModalPosition();
@@ -965,7 +969,7 @@ class Dog {
     }
 
     beginMovement(tileX, tileY, time, options = {}) {
-        const { reason = 'patrol', pointerDirection = null } = options;
+        const { reason = 'patrol', pointerDirection = null, targetCat = null } = options;
         const targetPosition = this.computeAreaCenter(tileX, tileY);
 
         this.startPixelX = this.text.x;
@@ -974,6 +978,8 @@ class Dog {
         this.targetTileY = tileY;
         this.targetPixelX = targetPosition.x;
         this.targetPixelY = targetPosition.y;
+        this.currentMoveReason = reason;
+        this.currentTargetCat = targetCat || null;
 
         const distance = Phaser.Math.Distance.Between(
             this.startPixelX,
@@ -990,49 +996,49 @@ class Dog {
             : `Started patrol toward (${this.targetTileX}, ${this.targetTileY})`;
         this.recordMovementLog(logMessage, time);
 
-        if (reason === 'alert' && pointerDirection) {
-            this.showAlertPointer(pointerDirection);
-        } else if (reason !== 'alert') {
-            this.hideAlertPointer();
+        if (pointerDirection) {
+            this.showDirectionPointer(pointerDirection);
+        } else {
+            this.hideDirectionPointer();
         }
     }
 
     resolvePointerSymbol(direction) {
         if (!direction || typeof direction !== 'object') {
-            return '->';
+            return '→';
         }
 
         const { x = 0, y = 0 } = direction;
 
         if (Math.abs(x) >= Math.abs(y)) {
             if (x > 0) {
-                return '->';
+                return '→';
             }
 
             if (x < 0) {
-                return '<-';
+                return '←';
             }
         }
 
         if (y < 0) {
-            return '^';
+            return '↑';
         }
 
         if (y > 0) {
-            return 'v';
+            return '↓';
         }
 
-        return '->';
+        return '→';
     }
 
-    showAlertPointer(direction) {
+    showDirectionPointer(direction) {
         const symbol = this.resolvePointerSymbol(direction);
         this.alertPointer.setText(symbol);
         this.alertPointer.setVisible(true);
-        this.alertPointer.setPosition(this.text.x, this.text.y);
+        this.updateDirectionPointerPosition(this.text.x, this.text.y);
     }
 
-    hideAlertPointer() {
+    hideDirectionPointer() {
         this.alertPointer.setVisible(false);
     }
 
@@ -1057,7 +1063,7 @@ class Dog {
             );
             this.nextMoveCheckTime = timestamp;
         } else {
-            this.hideAlertPointer();
+            this.hideDirectionPointer();
         }
     }
 
@@ -1080,7 +1086,7 @@ class Dog {
 
         this.alertTarget = null;
         this.alertPathBlocked = false;
-        this.hideAlertPointer();
+        this.hideDirectionPointer();
         return true;
     }
 
@@ -1123,6 +1129,10 @@ class Dog {
 
         if (this.nodeIdentifier) {
             lines.push(`Node: ${this.nodeIdentifier}`);
+        }
+
+        if (this.isAssisting && this.assistTarget) {
+            lines.push('Status: Assisting cat');
         }
 
         lines.push(`SPD: ${Math.round(this.speed)}`);
@@ -1168,6 +1178,16 @@ class Dog {
     }
 
     applyFacialFeatures() {
+        if (this.isAssisting) {
+            if (this.currentAscii !== DOG_ASSIST_ASCII) {
+                this.currentAscii = DOG_ASSIST_ASCII;
+                this.text.setText(DOG_ASSIST_ASCII);
+                this.scaleToTiles();
+            }
+
+            return;
+        }
+
         const targetEyes = this.isBlinking ? DOG_EYES_BLINK : DOG_EYES_OPEN;
         const targetMouth = this.isTongueOut ? DOG_MOUTH_TONGUE : DOG_MOUTH_IDLE;
         const ascii = buildDogAscii(targetEyes, targetMouth);
@@ -1181,6 +1201,11 @@ class Dog {
 
     updateFacialAnimations(time) {
         const currentTime = typeof time === 'number' ? time : 0;
+
+        if (this.isAssisting) {
+            this.applyFacialFeatures();
+            return;
+        }
 
         if (this.isBlinking && currentTime >= this.blinkEndTime) {
             this.isBlinking = false;
@@ -1261,8 +1286,60 @@ class Dog {
         return null;
     }
 
+    findClosestCatNeedingAssistance(cats) {
+        if (!cats || cats.length === 0) {
+            return null;
+        }
+
+        const needingHelp = cats.filter((cat) => this.catNeedsAssistance(cat));
+
+        if (needingHelp.length === 0) {
+            return null;
+        }
+
+        return this.findClosestCat(needingHelp);
+    }
+
+    catNeedsAssistance(cat) {
+        if (!cat) {
+            return false;
+        }
+
+        if (typeof cat.hasAlert === 'function') {
+            return cat.hasAlert();
+        }
+
+        return Boolean(cat.alertDetails);
+    }
+
+    isWithinAssistanceRange(cat) {
+        if (!cat) {
+            return false;
+        }
+
+        const dogCenterX = this.tileX + this.tileWidth / 2;
+        const dogCenterY = this.tileY + this.tileHeight / 2;
+        const catCenterX = cat.tileX + 0.5;
+        const catCenterY = cat.tileY + 0.5;
+
+        return Math.abs(catCenterX - dogCenterX) <= 1 && Math.abs(catCenterY - dogCenterY) <= 1;
+    }
+
     update(time, cats) {
         this.updateFacialAnimations(time);
+
+        if (this.isAssisting) {
+            const assistanceActive = this.updateAssistanceState(time);
+
+            if (assistanceActive) {
+                if (this.modal.visible) {
+                    this.modal.setText(this.buildModalContent());
+                    this.updateModalPosition();
+                }
+
+                return;
+            }
+        }
 
         let hasActiveAlert = false;
 
@@ -1293,7 +1370,7 @@ class Dog {
             this.text.setPosition(currentX, currentY);
 
             if (this.alertPointer.visible) {
-                this.alertPointer.setPosition(currentX, currentY);
+                this.updateDirectionPointerPosition(currentX, currentY);
             }
 
             if (this.modal.visible) {
@@ -1316,8 +1393,17 @@ class Dog {
                 ) {
                     this.resolveAlert(time);
                 } else if (this.isRespondingToAlert() && hasActiveAlert) {
-                    this.hideAlertPointer();
+                    this.hideDirectionPointer();
                 } else if (!this.isRespondingToAlert()) {
+                    if (
+                        this.currentTargetCat &&
+                        this.catNeedsAssistance(this.currentTargetCat) &&
+                        this.isWithinAssistanceRange(this.currentTargetCat)
+                    ) {
+                        this.beginAssistance(this.currentTargetCat, time);
+                        return;
+                    }
+
                     this.scheduleNextMoveCheck(time);
                 }
             }
@@ -1325,13 +1411,27 @@ class Dog {
             return;
         }
 
-        if (this.alertPointer.visible && !hasActiveAlert) {
-            this.hideAlertPointer();
+        if (this.alertPointer.visible && !hasActiveAlert && !this.isRespondingToAlert()) {
+            this.hideDirectionPointer();
         }
 
         if (this.modal.visible) {
             this.modal.setText(this.buildModalContent());
             this.updateModalPosition();
+        }
+
+        if (this.currentTargetCat && cats && !cats.includes(this.currentTargetCat)) {
+            this.currentTargetCat = null;
+        }
+
+        if (
+            !hasActiveAlert &&
+            this.currentTargetCat &&
+            this.catNeedsAssistance(this.currentTargetCat) &&
+            this.isWithinAssistanceRange(this.currentTargetCat)
+        ) {
+            this.beginAssistance(this.currentTargetCat, time);
+            return;
         }
 
         if (hasActiveAlert && this.alertTarget) {
@@ -1343,7 +1443,7 @@ class Dog {
                     this.alertPathBlocked = true;
                 }
 
-                this.hideAlertPointer();
+                this.hideDirectionPointer();
 
                 return;
             }
@@ -1377,15 +1477,29 @@ class Dog {
             return;
         }
 
-        const targetCat = this.findClosestCat(cats);
-        const move = this.determineStepToward(targetCat);
+        const targetCat = this.findClosestCatNeedingAssistance(cats) || this.findClosestCat(cats);
 
-        if (!move) {
-            this.recordMovementLog('No viable path toward nearest cat', time);
+        if (targetCat && this.catNeedsAssistance(targetCat) && this.isWithinAssistanceRange(targetCat)) {
+            this.beginAssistance(targetCat, time);
             return;
         }
 
-        this.beginMovement(this.tileX + move.x, this.tileY + move.y, time);
+        const move = this.determineStepToward(targetCat);
+
+        if (!move) {
+            if (targetCat && this.catNeedsAssistance(targetCat)) {
+                this.beginAssistance(targetCat, time);
+            } else {
+                this.recordMovementLog('No viable path toward nearest cat', time);
+            }
+            return;
+        }
+
+        this.beginMovement(this.tileX + move.x, this.tileY + move.y, time, {
+            reason: 'cat',
+            pointerDirection: move,
+            targetCat
+        });
     }
 
     onGridLayoutChanged() {
@@ -1404,6 +1518,87 @@ class Dog {
         this.text.destroy();
         this.modal.destroy();
         this.alertPointer.destroy();
+    }
+
+    beginAssistance(cat, time) {
+        if (!cat) {
+            return;
+        }
+
+        const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+
+        this.isMoving = false;
+        this.currentMoveReason = 'assisting';
+        this.currentTargetCat = null;
+        this.assistTarget = cat;
+        this.nextMoveCheckTime = Number.POSITIVE_INFINITY;
+        this.hideDirectionPointer();
+
+        this.startPixelX = this.text.x;
+        this.startPixelY = this.text.y;
+        this.targetPixelX = this.text.x;
+        this.targetPixelY = this.text.y;
+        this.moveDuration = 0;
+        this.moveStartTime = timestamp;
+
+        this.isBlinking = false;
+        this.blinkEndTime = Number.POSITIVE_INFINITY;
+        this.nextBlinkTime = Number.POSITIVE_INFINITY;
+        this.isTongueOut = false;
+        this.tongueEndTime = Number.POSITIVE_INFINITY;
+        this.nextTongueTime = Number.POSITIVE_INFINITY;
+
+        this.isAssisting = true;
+        this.assistEndTime = timestamp + 1500;
+        this.applyFacialFeatures();
+
+        this.recordMovementLog(
+            `Providing assistance to cat at (${cat.tileX}, ${cat.tileY})`,
+            timestamp
+        );
+
+        if (this.modal.visible) {
+            this.modal.setText(this.buildModalContent());
+            this.updateModalPosition();
+        }
+
+        if (this.catNeedsAssistance(cat) && typeof cat.clearAlert === 'function') {
+            cat.clearAlert(timestamp);
+        }
+    }
+
+    updateAssistanceState(time) {
+        if (!this.isAssisting) {
+            return false;
+        }
+
+        const currentTime = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+
+        if (currentTime >= this.assistEndTime) {
+            this.isAssisting = false;
+            this.assistEndTime = 0;
+            this.assistTarget = null;
+            this.nextMoveCheckTime = currentTime + Phaser.Math.Between(
+                DOG_MOVE_INTERVAL_RANGE.min,
+                DOG_MOVE_INTERVAL_RANGE.max
+            );
+            this.scheduleNextBlink(currentTime);
+            this.scheduleNextTongue(currentTime);
+            this.currentAscii = '';
+            this.applyFacialFeatures();
+            return false;
+        }
+
+        return true;
+    }
+
+    updateDirectionPointerPosition(x, y) {
+        if (!this.alertPointer.visible) {
+            return;
+        }
+
+        const offset = (this.text.displayHeight / 2) + (this.grid.tileSize * 0.25);
+        this.alertPointer.setPosition(x, y - offset);
     }
 
     recordMovementLog(message, time) {
