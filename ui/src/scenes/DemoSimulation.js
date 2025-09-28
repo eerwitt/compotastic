@@ -49,12 +49,19 @@ const GO_LIVE_ASCII = [
     '└────────────────────┘'
 ].join('\n');
 
+const DEMO_MODE_MESSAGE = 'DEMO MODE';
+const DEMO_MODE_SPINNER_FRAMES = Object.freeze(['|', '/', '-', '\\']);
+
 export class DemoSimulation extends Simulation {
     constructor() {
         super('DemoSimulation');
 
         this.goLiveButton = null;
         this.isDemoSimulation = true;
+        this.demoModeIndicator = null;
+        this.demoModeAnimationEvent = null;
+        this.demoModeDisplayChars = null;
+        this.demoModeAnimationState = null;
         this.handleConnectionStatusChange = this.handleConnectionStatusChange.bind(this);
         this.repositionGoLiveButton = this.repositionGoLiveButton.bind(this);
     }
@@ -67,6 +74,7 @@ export class DemoSimulation extends Simulation {
 
         this.createGoLiveButton();
         this.updateGoLiveButtonVisibility(Boolean(this.registry.get('wsConnected')));
+        this.createDemoModeIndicator();
 
         this.game.events.on('ws-connected', this.handleConnectionStatusChange);
         this.game.events.on('ws-disconnected', this.handleConnectionStatusChange);
@@ -81,6 +89,19 @@ export class DemoSimulation extends Simulation {
                 this.goLiveButton.destroy();
                 this.goLiveButton = null;
             }
+
+            if (this.demoModeAnimationEvent) {
+                this.demoModeAnimationEvent.remove();
+                this.demoModeAnimationEvent = null;
+            }
+
+            if (this.demoModeIndicator) {
+                this.demoModeIndicator.destroy();
+                this.demoModeIndicator = null;
+            }
+
+            this.demoModeDisplayChars = null;
+            this.demoModeAnimationState = null;
         });
     }
 
@@ -99,6 +120,42 @@ export class DemoSimulation extends Simulation {
                 return clone;
             })
         };
+    }
+
+    createDemoModeIndicator() {
+        if (this.demoModeIndicator) {
+            this.demoModeIndicator.destroy();
+            this.demoModeIndicator = null;
+        }
+
+        if (this.demoModeAnimationEvent) {
+            this.demoModeAnimationEvent.remove();
+            this.demoModeAnimationEvent = null;
+        }
+
+        this.demoModeDisplayChars = Array.from(DEMO_MODE_MESSAGE);
+        this.initializeDemoModeAnimationState();
+
+        this.demoModeIndicator = this.add.text(0, 0, DEMO_MODE_MESSAGE, {
+            fontFamily: 'Courier',
+            fontSize: 18,
+            color: '#00ff00'
+        });
+
+        this.demoModeIndicator.setDepth(2000);
+        this.demoModeIndicator.setScrollFactor(0);
+        this.demoModeIndicator.setOrigin(1, 0);
+        this.demoModeIndicator.setPadding(8, 8, 8, 8);
+        this.demoModeIndicator.setText(this.demoModeDisplayChars.join(''));
+
+        this.demoModeAnimationEvent = this.time.addEvent({
+            delay: 120,
+            loop: true,
+            callback: this.animateDemoModeIndicator,
+            callbackScope: this
+        });
+
+        this.repositionGoLiveButton();
     }
 
     createGoLiveButton() {
@@ -135,6 +192,58 @@ export class DemoSimulation extends Simulation {
         this.repositionGoLiveButton();
     }
 
+    initializeDemoModeAnimationState() {
+        if (!Array.isArray(this.demoModeDisplayChars) || this.demoModeDisplayChars.length === 0) {
+            this.demoModeDisplayChars = Array.from(DEMO_MODE_MESSAGE);
+        }
+
+        this.demoModeAnimationState = {
+            charIndex: this.findNextDemoModeCharIndex(-1),
+            symbolIndex: 0
+        };
+    }
+
+    findNextDemoModeCharIndex(previousIndex) {
+        const messageLength = DEMO_MODE_MESSAGE.length;
+
+        if (messageLength === 0) {
+            return -1;
+        }
+
+        for (let offset = 1; offset <= messageLength; offset += 1) {
+            const candidateIndex = (previousIndex + offset) % messageLength;
+
+            if (DEMO_MODE_MESSAGE[candidateIndex] !== ' ') {
+                return candidateIndex;
+            }
+        }
+
+        return -1;
+    }
+
+    animateDemoModeIndicator() {
+        if (!this.demoModeIndicator || !this.demoModeAnimationState || !this.demoModeDisplayChars) {
+            return;
+        }
+
+        const { charIndex, symbolIndex } = this.demoModeAnimationState;
+
+        if (charIndex === -1) {
+            return;
+        }
+
+        if (symbolIndex < DEMO_MODE_SPINNER_FRAMES.length) {
+            this.demoModeDisplayChars[charIndex] = DEMO_MODE_SPINNER_FRAMES[symbolIndex];
+            this.demoModeAnimationState.symbolIndex += 1;
+        } else {
+            this.demoModeDisplayChars[charIndex] = DEMO_MODE_MESSAGE[charIndex];
+            this.demoModeAnimationState.symbolIndex = 0;
+            this.demoModeAnimationState.charIndex = this.findNextDemoModeCharIndex(charIndex);
+        }
+
+        this.demoModeIndicator.setText(this.demoModeDisplayChars.join(''));
+    }
+
     updateGoLiveButtonVisibility(isConnected) {
         if (!this.goLiveButton) {
             return;
@@ -158,15 +267,21 @@ export class DemoSimulation extends Simulation {
     }
 
     repositionGoLiveButton() {
-        if (!this.goLiveButton) {
-            return;
-        }
-
         const size = this.scale.gameSize || { width: 0, height: 0 };
         const padding = 16;
-        const x = Math.max(size.width - this.goLiveButton.width - padding, padding);
-        const y = Math.max(size.height - this.goLiveButton.height - padding, padding);
 
-        this.goLiveButton.setPosition(x, y);
+        if (this.goLiveButton) {
+            const x = Math.max(size.width - this.goLiveButton.width - padding, padding);
+            const y = Math.max(size.height - this.goLiveButton.height - padding, padding);
+
+            this.goLiveButton.setPosition(x, y);
+        }
+
+        if (this.demoModeIndicator) {
+            const indicatorX = Math.max(size.width - padding, padding);
+            const indicatorY = padding;
+
+            this.demoModeIndicator.setPosition(indicatorX, indicatorY);
+        }
     }
 }
