@@ -1,0 +1,19 @@
+# Script for Presentation
+
+[short pause] This [short pause] is Compote. Imagine, for this presentation, an in vidiya Thor duct taped to his back. He is mobile with the power to compute.
+
+[short pause] These [short pause] are Compote's crew of Lazy Cats. They represent tiny Cortex M4 powered devices, with barely enough compute to control a Vape Pen.
+
+[short pause] com pote astic explores adding a compute layer to mesh tas tic. [short pause] The compute layer takes advantage of the mesh network for low power communication to provide edge AI to [short pause] crappy devices.
+
+[short pause] with com pote astic it is possible to share access to foundational models across swarms of low power devices in the field without investment in [short pause] expensive hardware.
+
+[short pause] in this demo, each device acts based on a simple Q learning integer lookup to find the best actions available.
+
+[short pause] when the device takes an action, it sends a bin packed update across the network of the state results after the action. [short pause] Devices with attributes to record these state updates and train the model to better handle the actions.
+
+[short pause] when a device is stuck, it broadcasts on the network that it needs help. The more powerful devices come within Bluetooth Low Energy range and performs an over the air update update to flash the firmware of the device with the latest model state for inference.
+
+[short pause] in this demo, the Open AI API is used as a placeholder for a higher compute local devices. In a real situation, each device with internet access may announce that it has access to these superior remote models.
+
+[short pause] what is next. [short pause] With the learnings from this project, I will alter the model inference to follow a pattern similar to ZML which uses the LLVM tool chain to generate MLIR of each operation allowing a larger customization of small device inference.
