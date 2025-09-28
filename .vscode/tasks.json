@@ -17,23 +17,28 @@
         "--host",
         "127.0.0.1",
         "--port",
-        "8000"
+        "8001"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
       },
       "isBackground": true,
-      "problemMatcher": [
-        {
-          "owner": "python",
-          "pattern": [],
-          "background": {
-            "activeOnStart": true,
-            "beginsPattern": ".*",
-            "endsPattern": "Uvicorn running on"
+      "problemMatcher": {
+        "owner": "python",
+        "pattern": [
+          {
+            "regexp": "^(.*):(\\d+): (.*)$",
+            "file": 1,
+            "line": 2,
+            "message": 3
           }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Uvicorn running on"
         }
-      ],
+      },
       "presentation": {
         "echo": true,
         "reveal": "always",
