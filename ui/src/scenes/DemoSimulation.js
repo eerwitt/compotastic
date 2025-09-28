@@ -28,6 +28,18 @@ const DEFAULT_DEMO_STATE = Object.freeze({
     dogs: [
         { identifier: 'demo-dog-ranger', tileX: 10, tileY: 3 },
         { identifier: 'demo-dog-scout', tileX: 16, tileY: 14 }
+    ],
+    rewards: [
+        { tileX: 4, tileY: 4, value: 6, attributes: { description: 'Fresh compute batch' } },
+        { tileX: 9, tileY: 8, value: 7, attributes: { description: 'Optimized workload bundle' } },
+        { tileX: 20, tileY: 5, value: 8, attributes: { description: 'Edge cache warmup' } },
+        { tileX: 5, tileY: 17, value: 5, attributes: { description: 'Telemetry backlog' } },
+        { tileX: 13, tileY: 20, value: 6, attributes: { description: 'Diagnostics sweep' } },
+        { tileX: 21, tileY: 13, value: 5, attributes: { description: 'Firmware verification tasks' } },
+        { tileX: 7, tileY: 11, value: -6, attributes: { description: 'Corrupted packet storm', needs: 'Filter update' } },
+        { tileX: 15, tileY: 7, value: -7, attributes: { description: 'Faulty workload handoff', needs: 'Rollback assist' } },
+        { tileX: 11, tileY: 18, value: -5, attributes: { description: 'Thermal throttling loop', needs: 'Cooling audit' } },
+        { tileX: 19, tileY: 15, value: -8, attributes: { description: 'Storage parity failure', needs: 'Parity rebuild' } }
     ]
 });
 
@@ -76,7 +88,16 @@ export class DemoSimulation extends Simulation {
         return {
             grid: { ...DEMO_GRID_SIZE },
             cats: DEFAULT_DEMO_STATE.cats.map((cat) => ({ ...cat, attributes: { ...cat.attributes } })),
-            dogs: DEFAULT_DEMO_STATE.dogs.map((dog) => ({ ...dog }))
+            dogs: DEFAULT_DEMO_STATE.dogs.map((dog) => ({ ...dog })),
+            rewards: DEFAULT_DEMO_STATE.rewards.map((reward) => {
+                const clone = { ...reward };
+
+                if (reward.attributes && typeof reward.attributes === 'object') {
+                    clone.attributes = { ...reward.attributes };
+                }
+
+                return clone;
+            })
         };
     }
 

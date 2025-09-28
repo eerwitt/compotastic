@@ -517,19 +517,20 @@ class Cat {
     }
 
     applyCurrentFace() {
+        const hasAlert = this.hasAlert();
         let targetFace = CAT_FACE;
 
-        if (this.isPerformingJob) {
-            targetFace = CAT_JOB_FACE;
-        } else if (this.hasAlert()) {
+        if (hasAlert) {
             targetFace = this.isAlertSymbolVisible ? CAT_ALERT_SYMBOL : CAT_FACE;
+        } else if (this.isPerformingJob) {
+            targetFace = CAT_JOB_FACE;
         } else if (this.isBlinking) {
             targetFace = CAT_BLINK_FACE;
         } else if (this.isMouthOpen) {
             targetFace = CAT_MOUTH_FACE;
         }
 
-        if (this.isPerformingJob) {
+        if (this.isPerformingJob && !hasAlert) {
             this.text.setColor(CAT_JOB_COLOR);
         } else {
             this.text.setColor(this.defaultColor);
@@ -544,13 +545,17 @@ class Cat {
 
     updateFacialAnimations(time) {
         const currentTime = typeof time === 'number' ? time : 0;
+        const hasAlert = this.hasAlert();
 
         if (this.isPerformingJob) {
             this.isBlinking = false;
             this.isMouthOpen = true;
-            this.isAlertSymbolVisible = false;
-            this.applyCurrentFace();
-            return;
+
+            if (!hasAlert) {
+                this.isAlertSymbolVisible = false;
+                this.applyCurrentFace();
+                return;
+            }
         }
 
         if (this.isBlinking && currentTime >= this.blinkEndTime) {
@@ -754,6 +759,103 @@ class Cat {
         }
     }
 
+    triggerAlertFromNegativeReward(rewardMarker = null, time = null) {
+        const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+        const descriptor = this.resolveNegativeRewardDescriptor(rewardMarker);
+        const valueLabel = Number.isFinite(rewardMarker?.value)
+            ? `${rewardMarker.value}`
+            : 'negative reward';
+        const baseMessage = descriptor
+            ? `Negative reward: ${descriptor}`
+            : `Negative reward encountered (${valueLabel})`;
+        const message = baseMessage.trim();
+        const needsText = this.resolveNegativeRewardNeeds(rewardMarker) || 'Requesting immediate assistance';
+        const summaryParts = [];
+
+        if (message.length > 0) {
+            summaryParts.push(message);
+        }
+
+        if (needsText && needsText.trim().length > 0) {
+            summaryParts.push(`Needs: ${needsText.trim()}`);
+        }
+
+        const summary = summaryParts.join(' — ');
+
+        this.alertDetails = {
+            message,
+            needsText: needsText && needsText.trim().length > 0 ? needsText.trim() : null,
+            summary: summary.length > 0 ? summary : null
+        };
+        this.isAlertSymbolVisible = true;
+        this.alertFlashInterval = Phaser.Math.Between(
+            CAT_ALERT_FLASH_INTERVAL_RANGE.min,
+            CAT_ALERT_FLASH_INTERVAL_RANGE.max
+        );
+        this.nextAlertToggleTime = timestamp + this.alertFlashInterval;
+        this.alertHoldLogged = false;
+        this.clearAlertResponder();
+        this.recordMovementLog(`${message} — calling for assistance`, timestamp);
+        this.applyCurrentFace();
+
+        if (this.modal.visible) {
+            this.modal.setText(this.buildModalContent());
+            this.updateModalPosition();
+        }
+    }
+
+    resolveNegativeRewardDescriptor(rewardMarker) {
+        if (!rewardMarker || typeof rewardMarker !== 'object') {
+            return null;
+        }
+
+        const attributes = rewardMarker.attributes && typeof rewardMarker.attributes === 'object'
+            ? rewardMarker.attributes
+            : null;
+
+        if (!attributes) {
+            return null;
+        }
+
+        const descriptorKeys = ['description', 'Description', 'incident', 'Incident', 'label', 'Label', 'Type'];
+
+        for (const key of descriptorKeys) {
+            const value = attributes[key];
+
+            if (typeof value === 'string' && value.trim().length > 0) {
+                return value.trim();
+            }
+        }
+
+        return null;
+    }
+
+    resolveNegativeRewardNeeds(rewardMarker) {
+        if (!rewardMarker || typeof rewardMarker !== 'object') {
+            return null;
+        }
+
+        const attributes = rewardMarker.attributes && typeof rewardMarker.attributes === 'object'
+            ? rewardMarker.attributes
+            : null;
+
+        if (!attributes) {
+            return null;
+        }
+
+        const needsKeys = ['needs', 'Needs', 'requirement', 'Requirement', 'requires', 'Requires'];
+
+        for (const key of needsKeys) {
+            const value = attributes[key];
+
+            if (typeof value === 'string' && value.trim().length > 0) {
+                return value.trim();
+            }
+        }
+
+        return null;
+    }
+
     onGridLayoutChanged() {
         this.scaleToTile();
         this.setPosition(this.tileX, this.tileY);
@@ -778,6 +880,9 @@ class Cat {
         const valueLabel = rewardMarker && Number.isFinite(rewardMarker.value)
             ? `${rewardMarker.value >= 0 ? '+' : ''}${rewardMarker.value}`
             : 'unknown';
+        const isNegativeReward = Boolean(
+            rewardMarker && Number.isFinite(rewardMarker.value) && rewardMarker.value < 0
+        );
 
         this.isPerformingJob = true;
         this.isMoving = false;
@@ -801,6 +906,10 @@ class Cat {
             `Consuming reward (${valueLabel}) at (${this.tileX}, ${this.tileY})`,
             timestamp
         );
+
+        if (isNegativeReward) {
+            this.triggerAlertFromNegativeReward(rewardMarker, timestamp);
+        }
 
         if (this.modal.visible) {
             this.modal.setText(this.buildModalContent());
