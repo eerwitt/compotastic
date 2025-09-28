@@ -14,6 +14,8 @@ from fastapi.testclient import TestClient
 from api.app import create_app
 from api.router import get_task_manager
 from api.tasks import (
+    CLASSIFICATION_ATTRIBUTE_SOURCE,
+    CLASSIFICATION_REWARD_VALUES,
     BackgroundTaskManager,
     ImagePayload,
     OpenAIImageProcessingService,
@@ -44,10 +46,10 @@ class _FailingImageService:
 
 
 class _StubOpenAIClient:
-    def __init__(self) -> None:
+    def __init__(self, response_payload: Any | None = None) -> None:
         self.upload_requests: list[tuple[str, bytes, str]] = []
         self.files = self._Files(self.upload_requests)
-        self.responses = self._Responses()
+        self.responses = self._Responses(response_payload)
 
     class _Files:
         def __init__(self, upload_requests: list[tuple[str, bytes, str]]) -> None:
@@ -59,8 +61,17 @@ class _StubOpenAIClient:
             return SimpleNamespace(id="file_123", purpose=purpose)
 
     class _Responses:
+        def __init__(self, response_payload: Any | None) -> None:
+            self._response_payload = response_payload
+
         async def create(self, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401
-            return SimpleNamespace(model_dump=lambda: {"kwargs": kwargs})
+            if callable(self._response_payload):
+                payload = self._response_payload(kwargs)
+            elif self._response_payload is not None:
+                payload = self._response_payload
+            else:
+                payload = {"kwargs": kwargs}
+            return SimpleNamespace(model_dump=lambda: payload)
 
 
 class ImagePayloadTests(unittest.TestCase):
@@ -155,6 +166,64 @@ class OpenAIImageProcessingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(client.upload_requests), 1)
         _, _, content_type = client.upload_requests[0]
         self.assertEqual(content_type, "image/jpeg")
+
+    async def test_generate_adds_reward_from_classification(self) -> None:
+        payload = ImagePayload(
+            data=JPEG_BYTES,
+            filename="scene.jpg",
+            content_type="image/jpeg",
+        )
+        response_payload = {
+            "output": [
+                {
+                    "content": [
+                        {"type": "output_text", "text": "MOVABLE crate"},
+                    ],
+                }
+            ]
+        }
+        client = _StubOpenAIClient(response_payload=response_payload)
+        metadata = {
+            "prompt": "classify",
+            "tileX": 6,
+            "tileY": 2,
+            "imageLabel": "crate",
+            "filename": "scene.jpg",
+        }
+        service = OpenAIImageProcessingService(client=client, log_callback=logging.getLogger("test.service"))
+
+        result = await service.generate(metadata, payload)
+
+        self.assertEqual(result["classification"], "MOVABLE")
+        reward = result.get("reward")
+        assert reward is not None
+        self.assertEqual(reward["tileX"], 6)
+        self.assertEqual(reward["tileY"], 2)
+        self.assertEqual(reward["value"], CLASSIFICATION_REWARD_VALUES["MOVABLE"])
+        attributes = reward.get("attributes", {})
+        self.assertEqual(attributes.get("classification"), "MOVABLE")
+        self.assertEqual(attributes.get("source"), CLASSIFICATION_ATTRIBUTE_SOURCE)
+        self.assertEqual(attributes.get("label"), "crate")
+
+    def test_extract_classification_handles_nested_payloads(self) -> None:
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "This obstacle is dangerous for robots.",
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        classification = OpenAIImageProcessingService._extract_classification(payload)
+
+        self.assertEqual(classification, "DANGEROUS")
 
 
 class BackgroundTaskApiTests(unittest.TestCase):

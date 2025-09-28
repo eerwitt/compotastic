@@ -6,11 +6,12 @@ import asyncio
 import io
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Mapping, Protocol
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,14 @@ JPEG_CONTENT_TYPE = "image/jpeg"
 JPEG_CONTENT_TYPE_ALIASES = {"image/jpeg", "image/jpg"}
 JPEG_EXTENSIONS = {".jpg", ".jpeg"}
 
+CLASSIFICATION_PATTERN = re.compile(r"\b(DANGEROUS|MOVABLE|IMMOVABLE)\b", re.IGNORECASE)
+CLASSIFICATION_REWARD_VALUES = {
+    "MOVABLE": 15,
+    "DANGEROUS": -20,
+    "IMMOVABLE": -3,
+}
+CLASSIFICATION_ATTRIBUTE_SOURCE = "OpenAI vision classifier"
+
 
 def _looks_like_jpeg(data: bytes) -> bool:
     """Return ``True`` when ``data`` appears to be a JPEG image."""
@@ -161,6 +170,126 @@ class OpenAIImageProcessingService:
         self._default_model = default_model
         self._chunk_size = max(1, chunk_size)
         self._log = log_callback or logger
+
+    @staticmethod
+    def _coerce_int(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            try:
+                return int(stripped)
+            except ValueError:
+                return None
+        return None
+
+    @classmethod
+    def _search_classification(cls, value: Any) -> str | None:
+        if isinstance(value, str):
+            match = CLASSIFICATION_PATTERN.search(value)
+            if match:
+                return match.group(1).upper()
+            return None
+        if isinstance(value, dict):
+            for item in value.values():
+                result = cls._search_classification(item)
+                if result:
+                    return result
+        elif isinstance(value, (list, tuple, set)):
+            for item in value:
+                result = cls._search_classification(item)
+                if result:
+                    return result
+        return None
+
+    @classmethod
+    def _extract_classification(cls, response_payload: Any) -> str | None:
+        if response_payload is None:
+            return None
+        if isinstance(response_payload, str):
+            return cls._search_classification(response_payload)
+        if isinstance(response_payload, dict):
+            # Prefer explicit response/output keys when present.
+            for key in ("response", "output", "choices", "content"):
+                if key in response_payload:
+                    result = cls._search_classification(response_payload[key])
+                    if result:
+                        return result
+            return cls._search_classification(response_payload)
+        if isinstance(response_payload, (list, tuple, set)):
+            for item in response_payload:
+                result = cls._extract_classification(item)
+                if result:
+                    return result
+        return None
+
+    @staticmethod
+    def _reward_value_for_classification(classification: str | None) -> int | None:
+        if not classification:
+            return None
+        return CLASSIFICATION_REWARD_VALUES.get(classification.upper())
+
+    @classmethod
+    def _build_reward_entry(
+        cls,
+        metadata: Mapping[str, Any],
+        classification: str | None,
+    ) -> dict[str, Any] | None:
+        reward_value = cls._reward_value_for_classification(classification)
+        if reward_value is None:
+            return None
+
+        tile_x = None
+        tile_y = None
+
+        if isinstance(metadata, Mapping):
+            for key in ("tileX", "tile_x", "x"):
+                tile_x = cls._coerce_int(metadata.get(key))
+                if tile_x is not None:
+                    break
+            for key in ("tileY", "tile_y", "y"):
+                tile_y = cls._coerce_int(metadata.get(key))
+                if tile_y is not None:
+                    break
+
+            # Support legacy combined tile coordinate like "12,7"
+            if (tile_x is None or tile_y is None) and isinstance(metadata.get("tile"), str):
+                parts = [segment.strip() for segment in metadata["tile"].split(",")]
+                if len(parts) == 2:
+                    maybe_x = cls._coerce_int(parts[0])
+                    maybe_y = cls._coerce_int(parts[1])
+                    tile_x = tile_x if tile_x is not None else maybe_x
+                    tile_y = tile_y if tile_y is not None else maybe_y
+
+        if tile_x is None or tile_y is None:
+            return None
+
+        attributes: dict[str, Any] = {
+            "classification": classification,
+            "source": CLASSIFICATION_ATTRIBUTE_SOURCE,
+        }
+
+        if isinstance(metadata, Mapping):
+            label = metadata.get("imageLabel") or metadata.get("label")
+            if isinstance(label, str) and label.strip():
+                attributes["label"] = label.strip()
+
+            filename = metadata.get("filename")
+            if isinstance(filename, str) and filename.strip():
+                attributes["filename"] = filename.strip()
+
+        return {
+            "tileX": tile_x,
+            "tileY": tile_y,
+            "value": reward_value,
+            "attributes": attributes,
+        }
 
     async def generate(self, metadata: dict[str, Any], payload: ImagePayload) -> dict[str, Any]:
         """Upload an image in chunks and submit it to the OpenAI Responses API."""
@@ -228,10 +357,32 @@ class OpenAIImageProcessingService:
         else:
             result_payload = json.loads(str(response)) if isinstance(response, str) else {"response": str(response)}
 
-        return {
+        classification = self._extract_classification(result_payload)
+        if classification:
+            self._log.info("OpenAI classification result: %s", classification)
+        else:
+            self._log.debug("OpenAI classification result missing or unrecognised")
+
+        reward_entry = self._build_reward_entry(metadata, classification)
+        if reward_entry:
+            self._log.debug(
+                "Derived reward entry for classification task at (%d, %d) with value %d",
+                reward_entry["tileX"],
+                reward_entry["tileY"],
+                reward_entry["value"],
+            )
+        elif classification:
+            self._log.debug("Classification result %s could not be mapped to a grid reward", classification)
+
+        result: dict[str, Any] = {
             "file_id": getattr(upload, "id", None),
             "response": result_payload,
         }
+        if classification:
+            result["classification"] = classification
+        if reward_entry:
+            result["reward"] = reward_entry
+        return result
 
 
 class BackgroundTaskManager:

@@ -1,5 +1,11 @@
-import { submitImageClassificationRequest } from '../api/imageTasks';
+import { submitImageClassificationRequest, fetchImageClassificationStatus } from '../api/imageTasks';
 export const DEFAULT_IMAGE_PROMPT = 'This is an image taken from a robots front facing camera, what is the object found in the foreground and classify if this image is dangerous or capable of being moved by a light weight robot. Respond with one of these words only DANGEROUS, MOVABLE, IMMOVABLE, UNKNOWN';
+
+const CLASSIFICATION_REWARD_MAP = {
+    MOVABLE: 15,
+    DANGEROUS: -20,
+    IMMOVABLE: -3
+};
 
 const JPEG_MIME_TYPES = ['image/jpeg', 'image/jpg'];
 
@@ -65,8 +71,16 @@ function stopEvent(event) {
 }
 
 export class ImageClassificationModal {
-    constructor({ defaultPrompt = DEFAULT_IMAGE_PROMPT } = {}) {
-        this.defaultPrompt = defaultPrompt;
+    constructor({
+        defaultPrompt = DEFAULT_IMAGE_PROMPT,
+        onClassificationComplete = null,
+        onClassificationError = null,
+        pollingIntervalMs = 1200,
+        pollingTimeoutMs = 45000
+    } = {}) {
+        this.defaultPrompt = typeof defaultPrompt === 'string' && defaultPrompt.trim().length > 0
+            ? defaultPrompt
+            : DEFAULT_IMAGE_PROMPT;
         this.overlay = null;
         this.form = null;
         this.promptInput = null;
@@ -84,6 +98,19 @@ export class ImageClassificationModal {
         this.selectedFile = null;
         this.selectedImageUrl = null;
         this.tileLocation = { x: null, y: null };
+        this.onClassificationComplete = typeof onClassificationComplete === 'function'
+            ? onClassificationComplete
+            : null;
+        this.onClassificationError = typeof onClassificationError === 'function'
+            ? onClassificationError
+            : null;
+        this.pollingIntervalMs = Number.isFinite(pollingIntervalMs) && pollingIntervalMs > 0
+            ? pollingIntervalMs
+            : 1200;
+        this.pollingTimeoutMs = Number.isFinite(pollingTimeoutMs) && pollingTimeoutMs > 0
+            ? pollingTimeoutMs
+            : 45000;
+        this.activeTaskId = null;
 
         this.handleOverlayClick = this.handleOverlayClick.bind(this);
         this.handleFormSubmit = this.handleFormSubmit.bind(this);
@@ -205,6 +232,7 @@ export class ImageClassificationModal {
             y: Number.isFinite(tileY) ? tileY : null
         };
 
+        this.activeTaskId = null;
         this.promptInput.value = this.defaultPrompt;
         this.resetSelectedImage();
         this.statusElement.textContent = '';
@@ -371,19 +399,242 @@ export class ImageClassificationModal {
             });
 
             const taskId = response && typeof response.task_id === 'string' ? response.task_id : null;
-            const successMessage = taskId
-                ? `Request submitted! Task ID: ${taskId}`
-                : 'Request submitted successfully.';
-
-            this.setStatus(successMessage, 'success');
-            setTimeout(() => this.close(), 1200);
+            if (taskId) {
+                this.activeTaskId = taskId;
+                this.setStatus(`Request submitted! Task ID: ${taskId}. Awaiting classification…`, 'info');
+                const statusPayload = await this.pollTaskUntilComplete(taskId);
+                const completionMessage = this.buildCompletionMessage(statusPayload);
+                this.setStatus(completionMessage, 'success');
+                this.notifyClassificationComplete(statusPayload);
+                this.activeTaskId = null;
+                setTimeout(() => this.close(), 1400);
+            } else {
+                this.setStatus('Request submitted successfully.', 'success');
+                setTimeout(() => this.close(), 1200);
+            }
         } catch (error) {
-            const message = error && typeof error.message === 'string'
-                ? error.message
-                : 'Failed to submit the image classification request.';
+            const message = this.extractErrorMessage(error);
             this.setStatus(message, 'error');
+            this.notifyClassificationError({
+                message,
+                error,
+                status: error && typeof error === 'object' ? error.statusPayload || null : null
+            });
         } finally {
+            this.activeTaskId = null;
             this.setBusy(false);
+        }
+    }
+
+    async pollTaskUntilComplete(taskId) {
+        const trimmedId = typeof taskId === 'string' ? taskId.trim() : '';
+
+        if (trimmedId.length === 0) {
+            throw new Error('A task identifier is required to monitor classification progress.');
+        }
+
+        const deadline = Date.now() + this.pollingTimeoutMs;
+        let lastStatus = null;
+
+        while (Date.now() <= deadline) {
+            lastStatus = await fetchImageClassificationStatus(trimmedId);
+            const status = typeof lastStatus?.status === 'string' ? lastStatus.status.toLowerCase() : '';
+
+            if (status === 'completed') {
+                return lastStatus;
+            }
+
+            if (status === 'failed') {
+                const message = this.extractErrorMessage({
+                    message: lastStatus?.error,
+                    statusPayload: lastStatus
+                });
+                const failureError = new Error(message);
+                failureError.statusPayload = lastStatus;
+                throw failureError;
+            }
+
+            const remaining = deadline - Date.now();
+
+            if (remaining <= 0) {
+                break;
+            }
+
+            await this.delay(Math.min(this.pollingIntervalMs, Math.max(50, remaining)));
+        }
+
+        const timeoutError = new Error('Timed out while waiting for the classification result.');
+        timeoutError.statusPayload = lastStatus;
+        throw timeoutError;
+    }
+
+    delay(durationMs) {
+        const interval = Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 0;
+        return new Promise((resolve) => {
+            setTimeout(resolve, interval);
+        });
+    }
+
+    extractErrorMessage(error) {
+        if (!error) {
+            return 'Failed to submit the image classification request.';
+        }
+
+        if (typeof error === 'string') {
+            return error;
+        }
+
+        const message = typeof error.message === 'string' ? error.message.trim() : '';
+
+        if (message.length > 0) {
+            return message;
+        }
+
+        const payloadError = error.statusPayload && typeof error.statusPayload.error === 'string'
+            ? error.statusPayload.error.trim()
+            : '';
+
+        if (payloadError.length > 0) {
+            return payloadError;
+        }
+
+        return 'Failed to submit the image classification request.';
+    }
+
+    buildCompletionMessage(statusPayload) {
+        const classification = this.extractClassification(statusPayload);
+        const rewardValue = this.extractRewardValue(statusPayload);
+
+        if (classification && Number.isFinite(rewardValue)) {
+            const prefix = rewardValue > 0 ? '+' : '';
+            return `Classification: ${classification} (${prefix}${rewardValue}) applied to the grid.`;
+        }
+
+        if (classification) {
+            return `Classification: ${classification}.`;
+        }
+
+        return 'Classification completed successfully.';
+    }
+
+    extractClassification(statusPayload) {
+        if (!statusPayload || typeof statusPayload !== 'object') {
+            return null;
+        }
+
+        const result = statusPayload.result && typeof statusPayload.result === 'object'
+            ? statusPayload.result
+            : null;
+
+        const direct = result && typeof result.classification === 'string'
+            ? result.classification
+            : null;
+
+        if (direct) {
+            return this.normalizeClassification(direct);
+        }
+
+        const reward = result && typeof result.reward === 'object' ? result.reward : null;
+
+        if (reward) {
+            if (typeof reward.classification === 'string') {
+                const normalized = this.normalizeClassification(reward.classification);
+                if (normalized) {
+                    return normalized;
+                }
+            }
+
+            const attributes = reward.attributes && typeof reward.attributes === 'object'
+                ? reward.attributes
+                : null;
+
+            if (attributes) {
+                const attributeValue = attributes.classification || attributes.Classification;
+
+                if (typeof attributeValue === 'string') {
+                    const normalized = this.normalizeClassification(attributeValue);
+                    if (normalized) {
+                        return normalized;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    normalizeClassification(candidate) {
+        if (typeof candidate !== 'string') {
+            return null;
+        }
+
+        const trimmed = candidate.trim();
+
+        if (trimmed.length === 0) {
+            return null;
+        }
+
+        const upper = trimmed.toUpperCase();
+
+        if (Object.prototype.hasOwnProperty.call(CLASSIFICATION_REWARD_MAP, upper)) {
+            return upper;
+        }
+
+        const match = upper.match(/(DANGEROUS|MOVABLE|IMMOVABLE)/);
+        return match ? match[1] : null;
+    }
+
+    extractRewardValue(statusPayload) {
+        if (!statusPayload || typeof statusPayload !== 'object') {
+            return null;
+        }
+
+        const reward = statusPayload.result && typeof statusPayload.result === 'object'
+            ? statusPayload.result.reward
+            : null;
+
+        if (reward && typeof reward.value === 'number' && Number.isFinite(reward.value)) {
+            return Math.trunc(reward.value);
+        }
+
+        const classification = this.extractClassification(statusPayload);
+
+        if (classification && Object.prototype.hasOwnProperty.call(CLASSIFICATION_REWARD_MAP, classification)) {
+            return CLASSIFICATION_REWARD_MAP[classification];
+        }
+
+        return null;
+    }
+
+    notifyClassificationComplete(statusPayload) {
+        if (typeof this.onClassificationComplete !== 'function') {
+            return;
+        }
+
+        try {
+            this.onClassificationComplete({
+                status: statusPayload,
+                tileX: this.tileLocation.x,
+                tileY: this.tileLocation.y
+            });
+        } catch (callbackError) {
+            console.warn('Image classification completion handler failed', callbackError);
+        }
+    }
+
+    notifyClassificationError(details) {
+        if (typeof this.onClassificationError !== 'function') {
+            return;
+        }
+
+        try {
+            this.onClassificationError({
+                ...details,
+                tileX: this.tileLocation.x,
+                tileY: this.tileLocation.y
+            });
+        } catch (callbackError) {
+            console.warn('Image classification error handler failed', callbackError);
         }
     }
 
@@ -443,6 +694,7 @@ export class ImageClassificationModal {
         this.isVisible = false;
         this.setBusy(false);
         this.resetSelectedImage();
+        this.activeTaskId = null;
     }
 
     destroy() {

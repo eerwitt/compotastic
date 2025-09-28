@@ -67,12 +67,36 @@ function normalizePrompt(prompt) {
 }
 
 function buildMetadata({ prompt, tileX, tileY, imagePath, imageLabel, filename }) {
-    return {
+    const metadata = {
         prompt,
-        tile: 'default-title',
         source: 'phaser-grid-selection',
         createdAt: new Date().toISOString()
     };
+
+    const normalizedTileX = Number.isInteger(tileX) ? tileX : null;
+    const normalizedTileY = Number.isInteger(tileY) ? tileY : null;
+
+    if (normalizedTileX !== null && normalizedTileY !== null) {
+        metadata.tileX = normalizedTileX;
+        metadata.tileY = normalizedTileY;
+        metadata.tile = `${normalizedTileX},${normalizedTileY}`;
+    } else {
+        metadata.tile = 'default-title';
+    }
+
+    if (typeof imageLabel === 'string' && imageLabel.trim().length > 0) {
+        metadata.imageLabel = imageLabel.trim();
+    }
+
+    if (typeof filename === 'string' && filename.trim().length > 0) {
+        metadata.filename = filename.trim();
+    }
+
+    if (typeof imagePath === 'string' && imagePath.trim().length > 0) {
+        metadata.imagePath = imagePath.trim();
+    }
+
+    return metadata;
 }
 
 async function loadImageBlob(imagePath) {
@@ -135,6 +159,46 @@ function buildTasksUrl() {
     const normalized = trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
 
     return `${normalized || 'http://localhost:8001'}/tasks`;
+}
+
+export async function fetchImageClassificationStatus(taskId) {
+    const trimmedId = typeof taskId === 'string' ? taskId.trim() : '';
+
+    if (trimmedId.length === 0) {
+        throw new Error('A task identifier is required to check status.');
+    }
+
+    const response = await fetch(`${buildTasksUrl()}/${encodeURIComponent(trimmedId)}`);
+
+    if (!response.ok) {
+        let message = 'Failed to fetch the task status.';
+
+        try {
+            const payload = await response.json();
+
+            if (payload && typeof payload.detail === 'string' && payload.detail.trim().length > 0) {
+                message = payload.detail.trim();
+            }
+        } catch (jsonError) {
+            try {
+                const text = await response.text();
+
+                if (typeof text === 'string' && text.trim().length > 0) {
+                    message = text.trim();
+                }
+            } catch (textError) {
+                // Ignore secondary parsing errors and keep the default message.
+            }
+        }
+
+        throw new Error(message);
+    }
+
+    try {
+        return await response.json();
+    } catch (error) {
+        throw new Error('Received an invalid task status response.');
+    }
 }
 
 function isFileLike(candidate) {
