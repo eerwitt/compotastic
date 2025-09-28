@@ -46,6 +46,12 @@ const DEMO_NEGATIVE_REWARD_COUNT = 3;
 const DEMO_POSITIVE_REWARD_VALUE = 5;
 const DEMO_NEGATIVE_REWARD_VALUE = -5;
 
+const CLASSIFICATION_REWARD_VALUES = {
+    MOVABLE: 15,
+    DANGEROUS: -20,
+    IMMOVABLE: -3
+};
+
 const CAT_BLINK_INTERVAL_RANGE = { min: 2800, max: 5200 };
 const CAT_BLINK_DURATION = 250;
 const CAT_MOUTH_INTERVAL_RANGE = { min: 3400, max: 6800 };
@@ -1258,6 +1264,8 @@ export class Simulation extends Scene {
         this.handleNodeHover = this.handleNodeHover.bind(this);
         this.handleNodeHoverEnd = this.handleNodeHoverEnd.bind(this);
         this.handleGridPointerUp = this.handleGridPointerUp.bind(this);
+        this.handleClassificationTaskComplete = this.handleClassificationTaskComplete.bind(this);
+        this.handleClassificationTaskError = this.handleClassificationTaskError.bind(this);
     }
 
     preload() {
@@ -1287,7 +1295,9 @@ export class Simulation extends Scene {
         });
 
         this.imageModal = new ImageClassificationModal({
-            defaultPrompt: DEFAULT_IMAGE_PROMPT
+            defaultPrompt: DEFAULT_IMAGE_PROMPT,
+            onClassificationComplete: this.handleClassificationTaskComplete,
+            onClassificationError: this.handleClassificationTaskError
         });
         this.input.on('pointerup', this.handleGridPointerUp, this);
 
@@ -1773,6 +1783,42 @@ export class Simulation extends Scene {
         });
     }
 
+    upsertRewardMarker(entry) {
+        if (!this.grid) {
+            return false;
+        }
+
+        const normalized = this.normalizeRewardEntry(entry);
+        const tileX = Number.isInteger(normalized.tileX) ? normalized.tileX : null;
+        const tileY = Number.isInteger(normalized.tileY) ? normalized.tileY : null;
+
+        if (tileX === null || tileY === null) {
+            return false;
+        }
+
+        if (!this.grid.containsTile(tileX, tileY)) {
+            return false;
+        }
+
+        const attributes = normalized.attributes && typeof normalized.attributes === 'object'
+            ? { ...normalized.attributes }
+            : null;
+
+        const existingIndex = this.rewardMarkers.findIndex((reward) => (
+            reward.tileX === tileX && reward.tileY === tileY
+        ));
+
+        if (existingIndex >= 0) {
+            const existing = this.rewardMarkers[existingIndex];
+            existing.destroy();
+            this.rewardMarkers.splice(existingIndex, 1);
+        }
+
+        const marker = new RewardMarker(this, this.grid, tileX, tileY, normalized.value, attributes);
+        this.rewardMarkers.push(marker);
+        return true;
+    }
+
     generateDemoRewards() {
         if (!this.grid) {
             return;
@@ -1969,6 +2015,121 @@ export class Simulation extends Scene {
         }
 
         this.applySimulationConfig(config);
+    }
+
+    handleClassificationTaskComplete({ status, tileX, tileY } = {}) {
+        if (!status || typeof status !== 'object') {
+            return;
+        }
+
+        const result = status.result && typeof status.result === 'object'
+            ? status.result
+            : {};
+
+        const rewardEntry = result.reward && typeof result.reward === 'object'
+            ? { ...result.reward }
+            : null;
+
+        const classification = typeof result.classification === 'string'
+            ? result.classification
+            : null;
+
+        const normalizedClassification = this.normalizeClassificationLabel(
+            rewardEntry && typeof rewardEntry.classification === 'string'
+                ? rewardEntry.classification
+                : classification
+        );
+
+        let targetReward = rewardEntry;
+
+        if (!targetReward && normalizedClassification) {
+            const fallbackValue = this.resolveClassificationRewardValue(normalizedClassification);
+
+            if (fallbackValue !== null) {
+                targetReward = {
+                    tileX: Number.isInteger(tileX) ? tileX : null,
+                    tileY: Number.isInteger(tileY) ? tileY : null,
+                    value: fallbackValue,
+                    attributes: {
+                        classification: normalizedClassification,
+                        source: 'OpenAI vision classifier'
+                    }
+                };
+            }
+        }
+
+        if (!targetReward) {
+            return;
+        }
+
+        const normalizedReward = this.normalizeRewardEntry(targetReward);
+
+        if (!Number.isInteger(normalizedReward.tileX) || !Number.isInteger(normalizedReward.tileY)) {
+            return;
+        }
+
+        if (!this.grid || !this.grid.containsTile(normalizedReward.tileX, normalizedReward.tileY)) {
+            return;
+        }
+
+        const attributes = normalizedReward.attributes && typeof normalizedReward.attributes === 'object'
+            ? { ...normalizedReward.attributes }
+            : {};
+
+        if (normalizedClassification && !Object.keys(attributes).some((key) => key.toLowerCase() === 'classification')) {
+            attributes.classification = normalizedClassification;
+        }
+
+        if (!Object.keys(attributes).some((key) => key.toLowerCase() === 'source')) {
+            attributes.source = 'OpenAI vision classifier';
+        }
+
+        normalizedReward.attributes = Object.keys(attributes).length > 0 ? attributes : null;
+
+        const added = this.upsertRewardMarker(normalizedReward);
+
+        if (added) {
+            this.refreshStatusPanel();
+        }
+    }
+
+    handleClassificationTaskError(details = {}) {
+        const message = typeof details.message === 'string' && details.message.trim().length > 0
+            ? details.message.trim()
+            : 'Image classification request failed.';
+
+        console.warn('Image classification task failed:', message, details);
+    }
+
+    normalizeClassificationLabel(value) {
+        if (typeof value !== 'string') {
+            return null;
+        }
+
+        const trimmed = value.trim();
+
+        if (trimmed.length === 0) {
+            return null;
+        }
+
+        const upper = trimmed.toUpperCase();
+
+        if (Object.prototype.hasOwnProperty.call(CLASSIFICATION_REWARD_VALUES, upper)) {
+            return upper;
+        }
+
+        const match = upper.match(/(DANGEROUS|MOVABLE|IMMOVABLE)/);
+        return match ? match[1] : null;
+    }
+
+    resolveClassificationRewardValue(classification) {
+        const normalized = this.normalizeClassificationLabel(classification);
+
+        if (!normalized) {
+            return null;
+        }
+
+        return CLASSIFICATION_REWARD_VALUES[normalized] ?? null;
     }
 
     buildStatusPanelData() {
