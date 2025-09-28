@@ -9,7 +9,9 @@ const DOG_FONT_STYLE = { fontFamily: 'Courier', fontSize: 30, color: '#f5deb3ff'
 
 const CAT_FACE = '^.^';
 const CAT_ALERT_SYMBOL = '/!\\';
+const CAT_JOB_FACE = '^O^';
 const CAT_FONT_STYLE = { fontFamily: 'Courier', fontSize: 32, color: '#e27272ff', fontStyle: 'bold' };
+const CAT_JOB_COLOR = '#32cd32ff';
 const CAT_MODAL_FONT_STYLE = { fontFamily: 'Courier', fontSize: 20, color: '#f4e1c1ff', align: 'left' };
 const DOG_MODAL_FONT_STYLE = { fontFamily: 'Courier', fontSize: 20, color: '#f7f7dcff', align: 'left' };
 
@@ -295,6 +297,8 @@ class Cat {
         this.text.setOrigin(0.5, 0.5);
         this.text.setDepth(5);
         this.text.setInteractive({ useHandCursor: true });
+        this.defaultColor = CAT_FONT_STYLE.color;
+        this.text.setColor(this.defaultColor);
 
         const { sanitizedAttributes, alertDetails } = extractCatAlertDetails(attributes);
 
@@ -343,6 +347,7 @@ class Cat {
         this.isMouthOpen = false;
         this.mouthEndTime = 0;
         this.nextMouthOpenTime = scene.time.now || 0;
+        this.isPerformingJob = false;
 
         this.text.on('pointerover', this.showAttributesModal, this);
         this.text.on('pointerout', this.hideAttributesModal, this);
@@ -395,6 +400,10 @@ class Cat {
 
         if (this.hasAlert()) {
             lines.push(...this.getAlertModalLines());
+        }
+
+        if (this.isPerformingJob) {
+            lines.push('Status: Performing job');
         }
 
         const cpuLabel = typeof this.attributes.cpu === 'string' && this.attributes.cpu.trim().length > 0
@@ -465,11 +474,21 @@ class Cat {
     }
 
     scheduleNextBlink(time, options = {}) {
+        if (this.isPerformingJob) {
+            this.nextBlinkTime = Number.POSITIVE_INFINITY;
+            return;
+        }
+
         const { usePhaseOffset = false } = options;
         this.nextBlinkTime = time + getRandomEventDelay(CAT_BLINK_INTERVAL_RANGE, usePhaseOffset);
     }
 
     scheduleNextMouthOpen(time, options = {}) {
+        if (this.isPerformingJob) {
+            this.nextMouthOpenTime = Number.POSITIVE_INFINITY;
+            return;
+        }
+
         const { usePhaseOffset = false } = options;
         this.nextMouthOpenTime = time + getRandomEventDelay(CAT_MOUTH_INTERVAL_RANGE, usePhaseOffset);
     }
@@ -480,6 +499,12 @@ class Cat {
     }
 
     beginMouthOpen(time) {
+        if (this.isPerformingJob) {
+            this.isMouthOpen = true;
+            this.mouthEndTime = Number.POSITIVE_INFINITY;
+            return;
+        }
+
         this.isMouthOpen = true;
         this.mouthEndTime = time + CAT_MOUTH_OPEN_DURATION;
     }
@@ -487,12 +512,20 @@ class Cat {
     applyCurrentFace() {
         let targetFace = CAT_FACE;
 
-        if (this.hasAlert()) {
+        if (this.isPerformingJob) {
+            targetFace = CAT_JOB_FACE;
+        } else if (this.hasAlert()) {
             targetFace = this.isAlertSymbolVisible ? CAT_ALERT_SYMBOL : CAT_FACE;
         } else if (this.isBlinking) {
             targetFace = CAT_BLINK_FACE;
         } else if (this.isMouthOpen) {
             targetFace = CAT_MOUTH_FACE;
+        }
+
+        if (this.isPerformingJob) {
+            this.text.setColor(CAT_JOB_COLOR);
+        } else {
+            this.text.setColor(this.defaultColor);
         }
 
         if (targetFace !== this.currentFace) {
@@ -504,6 +537,14 @@ class Cat {
 
     updateFacialAnimations(time) {
         const currentTime = typeof time === 'number' ? time : 0;
+
+        if (this.isPerformingJob) {
+            this.isBlinking = false;
+            this.isMouthOpen = true;
+            this.isAlertSymbolVisible = false;
+            this.applyCurrentFace();
+            return;
+        }
 
         if (this.isBlinking && currentTime >= this.blinkEndTime) {
             this.isBlinking = false;
@@ -540,7 +581,7 @@ class Cat {
     }
 
     lookAround(time) {
-        if (this.isMoving) {
+        if (this.isMoving || this.isPerformingJob) {
             return;
         }
 
@@ -598,6 +639,15 @@ class Cat {
     update(time) {
         this.updateFacialAnimations(time);
 
+        if (this.isPerformingJob) {
+            if (this.modal.visible) {
+                this.modal.setText(this.buildModalContent());
+                this.updateModalPosition();
+            }
+
+            return;
+        }
+
         if (this.isMoving) {
             const elapsed = time - this.moveStartTime;
             const progress = this.moveDuration > 0 ? Phaser.Math.Clamp(elapsed / this.moveDuration, 0, 1) : 1;
@@ -636,6 +686,11 @@ class Cat {
     }
 
     scheduleNextLook(time) {
+        if (this.isPerformingJob) {
+            this.nextLookTime = Number.POSITIVE_INFINITY;
+            return;
+        }
+
         this.nextLookTime = time + Phaser.Math.Between(LOOK_INTERVAL_RANGE.min, LOOK_INTERVAL_RANGE.max);
     }
 
@@ -643,7 +698,50 @@ class Cat {
         this.scaleToTile();
         this.setPosition(this.tileX, this.tileY);
         this.isMoving = false;
-        this.scheduleNextLook(this.scene.time.now || 0);
+        if (this.isPerformingJob) {
+            this.nextLookTime = Number.POSITIVE_INFINITY;
+        } else {
+            this.scheduleNextLook(this.scene.time.now || 0);
+        }
+        if (this.modal.visible) {
+            this.modal.setText(this.buildModalContent());
+            this.updateModalPosition();
+        }
+    }
+
+    beginRewardJob(time, rewardMarker = null) {
+        if (this.isPerformingJob) {
+            return;
+        }
+
+        const timestamp = Number.isFinite(time) ? time : (this.scene?.time?.now || 0);
+        const valueLabel = rewardMarker && Number.isFinite(rewardMarker.value)
+            ? `${rewardMarker.value >= 0 ? '+' : ''}${rewardMarker.value}`
+            : 'unknown';
+
+        this.isPerformingJob = true;
+        this.isMoving = false;
+        this.targetTileX = this.tileX;
+        this.targetTileY = this.tileY;
+        this.startPixelX = this.text.x;
+        this.startPixelY = this.text.y;
+        this.targetPixelX = this.text.x;
+        this.targetPixelY = this.text.y;
+        this.moveDuration = 0;
+        this.moveStartTime = timestamp;
+        this.nextLookTime = Number.POSITIVE_INFINITY;
+        this.isBlinking = false;
+        this.blinkEndTime = Number.POSITIVE_INFINITY;
+        this.nextBlinkTime = Number.POSITIVE_INFINITY;
+        this.isMouthOpen = true;
+        this.mouthEndTime = Number.POSITIVE_INFINITY;
+        this.nextMouthOpenTime = Number.POSITIVE_INFINITY;
+        this.applyCurrentFace();
+        this.recordMovementLog(
+            `Consuming reward (${valueLabel}) at (${this.tileX}, ${this.tileY})`,
+            timestamp
+        );
+
         if (this.modal.visible) {
             this.modal.setText(this.buildModalContent());
             this.updateModalPosition();
@@ -2253,6 +2351,10 @@ export class Simulation extends Scene {
             return 'ALERT — Condition detected';
         }
 
+        if (cat.isPerformingJob) {
+            return 'Performing job';
+        }
+
         if (cat.isMoving) {
             return 'Relocating across mesh';
         }
@@ -2490,40 +2592,35 @@ export class Simulation extends Scene {
         this.applyActiveHighlight();
     }
 
-    handleDemoRewardConsumption() {
-        if (!this.isDemoSimulation || this.rewardMarkers.length === 0 || this.cats.length === 0) {
+    handleRewardConsumption(time) {
+        if (this.rewardMarkers.length === 0 || this.cats.length === 0) {
             return;
         }
 
-        const occupiedTiles = new Set(
-            this.cats.map((cat) => `${cat.tileX},${cat.tileY}`)
-        );
-        const consumedMarkers = [];
+        const remainingMarkers = [];
 
-        this.rewardMarkers = this.rewardMarkers.filter((marker) => {
-            const locationKey = `${marker.tileX},${marker.tileY}`;
+        this.rewardMarkers.forEach((marker) => {
+            const matchingCat = this.cats.find((cat) => (
+                cat.tileX === marker.tileX &&
+                cat.tileY === marker.tileY
+            ));
 
-            if (occupiedTiles.has(locationKey)) {
-                consumedMarkers.push(marker);
+            if (matchingCat && typeof matchingCat.beginRewardJob === 'function') {
+                matchingCat.beginRewardJob(time, marker);
                 marker.destroy();
-                return false;
+            } else {
+                remainingMarkers.push(marker);
             }
-
-            return true;
         });
 
-        consumedMarkers.forEach((marker) => {
-            this.spawnDemoReward(marker.value);
-        });
+        this.rewardMarkers = remainingMarkers;
     }
 
     update(time) {
         this.cats.forEach((cat) => cat.update(time));
         this.dogs.forEach((dog) => dog.update(time, this.cats));
 
-        if (this.isDemoSimulation) {
-            this.handleDemoRewardConsumption();
-        }
+        this.handleRewardConsumption(time);
 
         if (typeof time === 'number' && time >= this.nextStatusPanelUpdateTime) {
             this.refreshStatusPanel();
