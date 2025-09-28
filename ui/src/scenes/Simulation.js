@@ -1317,12 +1317,41 @@ class Dog {
             return false;
         }
 
-        const dogCenterX = this.tileX + this.tileWidth / 2;
-        const dogCenterY = this.tileY + this.tileHeight / 2;
-        const catCenterX = cat.tileX + 0.5;
-        const catCenterY = cat.tileY + 0.5;
+        const catTileX = Number.isFinite(cat.tileX) ? cat.tileX : null;
+        const catTileY = Number.isFinite(cat.tileY) ? cat.tileY : null;
 
-        return Math.abs(catCenterX - dogCenterX) <= 1 && Math.abs(catCenterY - dogCenterY) <= 1;
+        if (catTileX === null || catTileY === null) {
+            return false;
+        }
+
+        const catTileWidth = Number.isFinite(cat.tileWidth) && cat.tileWidth > 0 ? cat.tileWidth : 1;
+        const catTileHeight = Number.isFinite(cat.tileHeight) && cat.tileHeight > 0 ? cat.tileHeight : 1;
+
+        const dogMinX = this.tileX;
+        const dogMaxX = this.tileX + this.tileWidth - 1;
+        const dogMinY = this.tileY;
+        const dogMaxY = this.tileY + this.tileHeight - 1;
+
+        const catMinX = catTileX;
+        const catMaxX = catTileX + catTileWidth - 1;
+        const catMinY = catTileY;
+        const catMaxY = catTileY + catTileHeight - 1;
+
+        let horizontalGap = 0;
+        if (catMaxX < dogMinX) {
+            horizontalGap = dogMinX - catMaxX - 1;
+        } else if (catMinX > dogMaxX) {
+            horizontalGap = catMinX - dogMaxX - 1;
+        }
+
+        let verticalGap = 0;
+        if (catMaxY < dogMinY) {
+            verticalGap = dogMinY - catMaxY - 1;
+        } else if (catMinY > dogMaxY) {
+            verticalGap = catMinY - dogMaxY - 1;
+        }
+
+        return horizontalGap <= 0 && verticalGap <= 0;
     }
 
     update(time, cats) {
@@ -1389,9 +1418,10 @@ class Dog {
                 if (
                     hasActiveAlert &&
                     this.alertTarget &&
-                    this.coversTile(this.alertTarget.tileX, this.alertTarget.tileY)
+                    this.isWithinAssistanceRange(this.alertTarget)
                 ) {
                     this.resolveAlert(time);
+                    hasActiveAlert = false;
                 } else if (this.isRespondingToAlert() && hasActiveAlert) {
                     this.hideDirectionPointer();
                 } else if (!this.isRespondingToAlert()) {
@@ -1435,6 +1465,11 @@ class Dog {
         }
 
         if (hasActiveAlert && this.alertTarget) {
+            if (this.isWithinAssistanceRange(this.alertTarget)) {
+                this.resolveAlert(time);
+                return;
+            }
+
             const move = this.determineStepToward(this.alertTarget);
 
             if (!move) {
